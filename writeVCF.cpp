@@ -1,5 +1,5 @@
 /*
- *Last Update: July 19, 2013
+ *Last Update: July 25, 2013
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
  *
@@ -17,6 +17,8 @@
 #include <sys/resource.h>
 #include <vector>
 
+#define SIZE1 20
+#define SIZE2 20
 using namespace std;
 
 static const char *options="f:F:p:P:n:N:i:I:c:C:r:R:";
@@ -30,13 +32,13 @@ static int row=0;
 
 /*fileformat,filter,alt,assembly,pedigree,sample,unifiedgenotyper,INFO,FORMAT*/
 typedef struct{ 
-    char field[20];
+    char field[SIZE1];
     char* value;  
 }META_1; 
 
 /*contigs*/
 typedef struct{ 
-    char* id;
+    char id[SIZE2];
     int len;
 }META_2;
 
@@ -80,35 +82,79 @@ void parseArgs(int argc, char **argv) {
     } // while
 } // parseArgs
 
-void parseHeader1(string linestream, map<string,string> &headmap1,META_1 *header){
-    int count=headmap1.size();
+void parseHeader1(string linestream, map<string,string> &headmap){
+    int count=headmap.size();
     int first=0,len=linestream.length();
     map<string,string>::iterator ret;
-    header=(META_1*)realloc(header,(count+1)*sizeof(META_1));  
     
     string key=linestream.substr(2,linestream.find_first_of("=")-2);
-    strcpy(header[count].field, key.c_str());
     first = linestream.find_first_of("<"); 
     if(first!=linestream.npos){
-	ret = headmap1.find(key);
-	if(ret==headmap1.end()){
-	    headmap1.insert(pair<string,string>(key,linestream.substr(first,len-first))); 
+	ret = headmap.find(key);
+	if(ret==headmap.end()){
+	    headmap.insert(pair<string,string>(key,linestream.substr(first,len-first))); 
 	}else{
-	    headmap1[key].append(linestream.substr(first,len-first));
+	    headmap[key].append(linestream.substr(first,len-first));
 	}
     }else{
-	ret = headmap1.find(key);
+	ret = headmap.find(key);
         first=linestream.find_first_of("=")+1; /*field w/o <...>*/
-	if(ret==headmap1.end()){
-	    headmap1.insert(pair<string,string>(key,linestream.substr(first,len-first))); 
+	if(ret==headmap.end()){
+	    headmap.insert(pair<string,string>(key,linestream.substr(first,len-first))); 
 	}else{
-	    headmap1[key].append(linestream.substr(first,len-first));
+	    headmap[key].append(linestream.substr(first,len-first));
 	}
     }
 }
 
-void parseHeader2(){
+void loadHeader1(map<string,string> &headmap,META_1 *header,hid_t file){
+    /*relocate header to META_1 before loading to HDF5*/
+    int x=0,count=headmap.size();
+    hid_t memtype,space,dset;
+    hid_t t1,t2;
+    hsize_t dim[1]={count};
+    herr_t status;
+    string name = varName + "metainfo";
+    for (map<string,string>::iterator it=headmap.begin(); it!=headmap.end();++it){
+	strcpy(header[x].field, it->first.c_str());
+	header[x].value = (char*)malloc(it->second.length()*sizeof(char)+1);
+        strcpy(header[x].value, it->second.c_str()); 
+        //cout << header[x].field << " ==> " << header[x].value << "\n\n\n";
+        headmap.erase(it);
+        x++;
+    }
+    /*Load to HDF5*/
+    space = H5Screate_simple(1,dim,NULL);
+    t1 = H5Tcopy(H5T_C_S1);
+    H5Tset_size(t1,SIZE1);
+    t2 = H5Tcopy(H5T_C_S1);
+    H5Tset_size(t2,H5T_VARIABLE);
+    memtype = H5Tcreate(H5T_COMPOUND,sizeof(META_1)); //create compound datatype
+    H5Tinsert(memtype,"field",HOFFSET(META_1,field),t1);
+    H5Tinsert(memtype,"value",HOFFSET(META_1,value),t2);
+    dset = H5Dcreate (file, name.c_str(), memtype, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    status = H5Dwrite(dset, memtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, header);
+    assert(status >=0);
+    /*free value pointers and variables*/
+    status = H5Dclose(dset);
+    status = H5Sclose(space);
+    status = H5Tclose(memtype);
+    assert(status>=0);
+    for(int x=0;x<count;x++){
+	free(header[x].value);
+    }
+}
 
+void parseHeader2(string linestream,META_2 *header,int count){
+    int idx1 = 0, idx2 = 0;
+    header = (META_2*)realloc(header,count*sizeof(META_2));
+    idx1 = linestream.find("ID")+3;
+    idx2 = linestream.find_first_of(",",idx1);
+    strcpy(header[count-1].id,(linestream.substr(idx1,idx2-idx1)).c_str());
+    idx1 = linestream.find_first_of("length",idx2)+7; 
+    idx2 = linestream.find_first_of(">",idx1);
+    header[count-1].len=atoi((linestream.substr(idx1,idx2-idx1)).c_str());
+    cout << header[count-1].id << "==>" << header[count-1].len << "\n";
 }
 
 int main(int argc, char **argv){
@@ -143,24 +189,26 @@ int main(int argc, char **argv){
     string linestream;
     hid_t file;
     META_1* header1=NULL;
-    
+    META_2* header2=NULL;
+    int contigcount=0;
     /*create new file*/
     file = H5Fcreate(datafile.c_str(),H5F_ACC_TRUNC,H5P_DEFAULT,H5P_DEFAULT); 
     for(int i=0;getline(fp,linestream);i++){
         if(linestream.substr(0,2) != "##"){ 
-	    break; /*finished reading header*/
-	}else if(linestream.substr(0,6) == "#CRHOM"){
-	    parseHeader2();
-            break;
+	    continue; /*finished reading header*/
 	}else if(linestream.substr(0,8) == "##contig"){
-	    break;
+	    //parseHeader2(linestream,header2,++contigcount);
+        }else if(linestream.substr(0,6) == "#CHROM"){ printf("final");
+	    break; 
 	}else{
-	    parseHeader1(linestream,headmap1,header1); 
+	    parseHeader1(linestream,headmap1); 
 	}
-	
-        
-        
     }
-    for (map<string,string>::iterator x=headmap1.begin(); x!=headmap1.end(); ++x)
-        std::cout << x->first << " => " << x->second << "\n\n\n";
+    int count=headmap1.size();
+    header1=(META_1*)malloc(count*sizeof(META_1));
+    loadHeader1(headmap1,header1,file); 
+    free(header1);
+    free(header2);
+    H5Fclose(file);
+    
 }
