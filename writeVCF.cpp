@@ -43,10 +43,6 @@ typedef struct{
     int len;
 }META_2;
 
-typedef struct{
-   char name[SIZE3];
-}SamNames;
-
 /*INFO&FORMAT IDs*/
 typedef struct{
     char* info;
@@ -63,7 +59,7 @@ typedef struct{
     char* filter;
     char* info; /*comma-separated values, ID in another table*/
     char* format; /*comma-separated values, ID in another table*/
-}Misc_t;
+}MISC;
 
 void parseArgs(int argc, char **argv) {
     extern char *optarg;
@@ -145,6 +141,8 @@ void loadHeader1(map<string,string> &headmap,hid_t file){
     status = H5Dclose(dset);
     status = H5Sclose(space);
     status = H5Tclose(memtype);
+    status = H5Tclose(t1);
+    status = H5Tclose(t2);
     assert(status>=0);
     for(int x=0;x<count;x++){
 	free(header[x].value);
@@ -171,6 +169,7 @@ void loadHeader2(META_2 *contig,hid_t file,int count){
     status = H5Dclose(dset);
     status = H5Sclose(space);
     status = H5Tclose(memtype);
+    status = H5Tclose(t1);
     assert(status>=0);
     free(contig);
 }
@@ -189,19 +188,53 @@ void parseHeader2(string linestream,META_2 *&contig,int count){
 
 
 void loadSampleNames(string linestream, hid_t file){
-    SamNames *samples;
-    int idx1=0,idx2=0,temp=0;
-    for(int x=0;x<9;x++){ //ignore fixed table header
+    char** samples=NULL;
+    int idx1=0,idx2=0,x=1,count=0;
+    for(x=0;x<9;x++){ //ignore fixed table header
         idx1 = linestream.find_first_of("\t",idx1+1); 
-    } cout<<"\n";
-    for(int x=0;idx1!=linestream.npos;x++){
-	//samples = (SamNames*)realloc(samples,(x+1)*sizeof(SamNames));
-        idx2 = linestream.find_first_of("\t",idx1+1); cout << idx2 << " ";
-        //strcpy(samples[x].name,(linestream.substr(idx1+1,idx2-idx1)).c_str());
+    } 
+    for(x=0;idx1<linestream.npos;x++){ 
+	samples = (char**)realloc(samples,(x+1)*sizeof(char*));
+        samples[x] = new char[SIZE3];
+        idx2 = linestream.find_first_of("\t",idx1+1); 
+        if(idx2==linestream.npos){
+	    strcpy(samples[x],(linestream.substr(idx1+1,linestream.length()-idx1)).c_str());
+	}else{
+	    strcpy(samples[x],(linestream.substr(idx1+1,idx2-idx1-1)).c_str());
+	}
         idx1=idx2; 
         //cout << samples[x].name << "\n";
-    }
+    } 
+    count=x;
+    for(x=0;x<count;x++) printf("%s\n",samples[x]);
+    
+    hid_t memtype,space,dset,t1;
+    hsize_t dim[1]={x};
+    herr_t status;
+    string name= varPath + varName + "_samples";
+    space = H5Screate_simple(1,dim,NULL);
+    t1 = H5Tcopy(H5T_C_S1);
+    H5Tset_size(t1,H5T_VARIABLE);
+    //memtype = H5Tcreate(H5T_COMPOUND,sizeof(SamNames));
+    //H5Tinsert(memtype,"name",HOFFSET(SamNames,name),t1);
+    dset = H5Dcreate (file, name.c_str(), t1, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    assert(status >=0);
+    status = H5Dwrite(dset, t1, H5S_ALL, H5S_ALL, H5P_DEFAULT, samples);
+   
+    assert(status >=0);
+    //free value pointers and variables
+    status = H5Dclose(dset);
+    status = H5Sclose(space);
+    status = H5Tclose(t1);
+    assert(status>=0);
+    for(x=0;x<count;x++) free(samples[x]);
+    free(samples);
 }
+
+void parseMisc(string linestream, MISC *&miscdata){}
+void parseInfoFormat(string linestream,INFO_FORMAT *&infoform){}
+void parseGenotypes(string linestream,int **call1,int **call2){}
+
 int main(int argc, char **argv){
     const rlim_t STACK_SIZE = 1000*1024*1024; 
     struct rlimit rl;
@@ -234,6 +267,9 @@ int main(int argc, char **argv){
     string linestream;
     hid_t file;
     META_2* contig=NULL;
+    MISC* miscdata = NULL;
+    INFO_FORMAT* infoform = NULL;
+    int** call1 = NULL, **call2=NULL;
     int contigcount=0;
     /*create new file*/
     file = H5Fcreate(datafile.c_str(),H5F_ACC_TRUNC,H5P_DEFAULT,H5P_DEFAULT); 
@@ -253,6 +289,14 @@ int main(int argc, char **argv){
     }
     loadHeader1(headmap,file); 
     loadHeader2(contig,file,contigcount);
+    for(int i=0,counter1=0,counter2=0;getline(fp,linestream);i++,counter1++,counter2++){ break;
+        parseMisc(linestream,miscdata);
+        parseInfoFormat(linestream,infoform);
+        parseGenotypes(linestream,call1,call2);
+        //parseSubFields(linestream,);
+        
+    }
+
     H5Fclose(file);
     
 }
