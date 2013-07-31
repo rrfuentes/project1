@@ -1,5 +1,5 @@
 /*
- *Last Update: July 25, 2013
+ *Last Update: July 31, 2013
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
  *
@@ -149,7 +149,7 @@ void loadHeader1(map<string,string> &headmap,hid_t file){
     }
 }
 
-void loadHeader2(META_2 *contig,hid_t file,int count){
+void loadHeader2(META_2 *contig,hid_t file,int count,map<string,int> &contigmap){
     hid_t memtype,space,dset,t1;
     hsize_t dim[1]={count};
     herr_t status;
@@ -171,6 +171,12 @@ void loadHeader2(META_2 *contig,hid_t file,int count){
     status = H5Tclose(memtype);
     status = H5Tclose(t1);
     assert(status>=0);
+    for(int x=0;x<count;x++){
+        contigmap.insert(pair<string,int>(string(contig[x].id),x));
+    }
+    /*for (map<string,int>::iterator it=contigmap.begin(); it!=contigmap.end();++it){
+	cout << it->first << "==>" << it->second << "\n";
+    }*/
     free(contig);
 }
 
@@ -189,8 +195,8 @@ void parseHeader2(string linestream,META_2 *&contig,int count){
 
 void loadSampleNames(string linestream, hid_t file){
     char** samples=NULL;
-    int idx1=0,idx2=0,x=1,count=0;
-    for(x=0;x<9;x++){ //ignore fixed table header
+    int idx1=0,idx2=0,x=0,count=0;
+    for(x=0;x<9;x++){ //ignore fixed table headername
         idx1 = linestream.find_first_of("\t",idx1+1); 
     } 
     for(x=0;idx1<linestream.npos;x++){ 
@@ -206,7 +212,6 @@ void loadSampleNames(string linestream, hid_t file){
         //cout << samples[x].name << "\n";
     } 
     count=x;
-    for(x=0;x<count;x++) printf("%s\n",samples[x]);
     
     hid_t memtype,space,dset,t1;
     hsize_t dim[1]={x};
@@ -215,8 +220,6 @@ void loadSampleNames(string linestream, hid_t file){
     space = H5Screate_simple(1,dim,NULL);
     t1 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t1,H5T_VARIABLE);
-    //memtype = H5Tcreate(H5T_COMPOUND,sizeof(SamNames));
-    //H5Tinsert(memtype,"name",HOFFSET(SamNames,name),t1);
     dset = H5Dcreate (file, name.c_str(), t1, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     assert(status >=0);
     status = H5Dwrite(dset, t1, H5S_ALL, H5S_ALL, H5P_DEFAULT, samples);
@@ -231,8 +234,47 @@ void loadSampleNames(string linestream, hid_t file){
     free(samples);
 }
 
-void parseMisc(string linestream, MISC *&miscdata){}
 void parseInfoFormat(string linestream,INFO_FORMAT *&infoform){}
+
+void parseMisc(string linestream, MISC *&miscdata,INFO_FORMAT *&infoform,map<string,int> contigmap){
+    int idx1=0,idx2=0,count=0;
+    /*chromID*/
+    idx2 = linestream.find_first_of("\t",idx1+1); 
+    cout << contigmap.find(linestream.substr(idx1,idx2-idx1))->second << "\t";
+    idx1=idx2+1;
+    /*POS*/
+    idx2 = linestream.find_first_of("\t",idx1+1); 
+    cout << atoi((linestream.substr(idx1,idx2-idx1)).c_str()) << "\t";
+    idx1=idx2+1;
+    /*ID*/
+    idx2 = linestream.find_first_of("\t",idx1+1); 
+    cout << (linestream.substr(idx1,idx2-idx1)).c_str() << "\t";
+    idx1=idx2+1;
+    /*REF*/
+    idx2 = linestream.find_first_of("\t",idx1+1); 
+    cout << (linestream.substr(idx1,idx2-idx1)).c_str() << "\t";
+    idx1=idx2+1;
+    /*ALT*/
+    idx2 = linestream.find_first_of("\t",idx1+1); 
+    cout << (linestream.substr(idx1,idx2-idx1)).c_str() << "\t";
+    idx1=idx2+1;
+    /*QUAL*/
+    idx2 = linestream.find_first_of("\t",idx1+1); 
+    cout << atoi((linestream.substr(idx1,idx2-idx1)).c_str()) << "\t";
+    idx1=idx2+1;
+    /*FILTER*/
+    idx2 = linestream.find_first_of("\t",idx1+1); 
+    cout << (linestream.substr(idx1,idx2-idx1)).c_str() << "\t";
+    idx1=idx2+1;
+    /*INFO*/
+    parseInfoFormat(linestream,infoform);
+    idx2 = linestream.find_first_of("\t",idx1+1); 
+    cout << (linestream.substr(idx1,idx2-idx1)).c_str() << "\n";
+    idx1=idx2+1;
+    /*FORMAT*/
+    
+}
+
 void parseGenotypes(string linestream,int **call1,int **call2){}
 
 int main(int argc, char **argv){
@@ -264,6 +306,7 @@ int main(int argc, char **argv){
 
     char* line=NULL;
     map<string,string> headmap;
+    map<string,int> contigmap;
     string linestream;
     hid_t file;
     META_2* contig=NULL;
@@ -288,15 +331,14 @@ int main(int argc, char **argv){
 	}
     }
     loadHeader1(headmap,file); 
-    loadHeader2(contig,file,contigcount);
-    for(int i=0,counter1=0,counter2=0;getline(fp,linestream);i++,counter1++,counter2++){ break;
-        parseMisc(linestream,miscdata);
-        parseInfoFormat(linestream,infoform);
+    loadHeader2(contig,file,contigcount,contigmap);
+    for(int i=0,counter1=0,counter2=0;getline(fp,linestream),i<5;i++,counter1++,counter2++){ 
+        parseMisc(linestream,miscdata,infoform,contigmap);
         parseGenotypes(linestream,call1,call2);
         //parseSubFields(linestream,);
-        
+        //break;
     }
-
+    contigmap.clear(); 
     H5Fclose(file);
     
 }
