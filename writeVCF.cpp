@@ -62,9 +62,9 @@ typedef struct{
     char alt[5];
     int qual;
     char* filter;
-    //unsigned int info;
+    unsigned int info;
     //char* infoval; /*comma-separated values, ID in another table*/
-    //unsigned int format; 
+    unsigned int format; 
 }MISC;
 
 void parseArgs(int argc, char **argv) {
@@ -88,6 +88,14 @@ void parseArgs(int argc, char **argv) {
         } // switch
     } // while
 } // parseArgs
+
+int checkType(char* type){
+    if(!strcmp(type,"Integer")) return 0;
+    else if(!strcmp(type,"Float")) return 1;
+    else if(!strcmp(type,"Flag")) return 2;
+    else if(!strcmp(type,"Character")) return 3;
+    else if(!strcmp(type,"String")) return 4;
+}
 
 void parseHeader1(string linestream, map<string,string> &headmap){
     int count=headmap.size();
@@ -226,7 +234,7 @@ void parseHeaderInfoFormat(string linestream,META_3 *&temp,int count){
     //cout << temp[count-1].id << "\t" << temp[count-1].num << "\t" << temp[count-1].type << "\t" << temp[count-1].desc << "\n";
 }
 
-void loadHeaderInfoFormat(bool flag,META_3 *&data,int count,map<string,int> &map,hid_t file){
+void loadHeaderInfoFormat(bool flag,META_3 *&data,int count,map<string,int> &map,vector<pair<int,int> > vec, hid_t file){
     hid_t memtype,space,dset,t1,t2,t3;
     hsize_t dim[1]={count};
     herr_t status;
@@ -260,8 +268,11 @@ void loadHeaderInfoFormat(bool flag,META_3 *&data,int count,map<string,int> &map
     assert(status>=0);
     for(int x=0;x<count;x++){
         map.insert(pair<string,int>(string(data[x].id),x));
+        vec.push_back(pair<int,int>(checkType(data[x].type),0));
+        cout << checkType(data[x].type) << " ";
         free(data[x].desc);
     }
+    cout << "\n";
     free(data);
 }
 
@@ -306,8 +317,29 @@ void loadSampleNames(string linestream, hid_t file){
     free(samples);
 }
 
-void parseInfoFormat(string linestream,map<string,int> ids){
+unsigned int parseInfo(string linestream,int idx1, int idx2, map<string,int> ids){
+    int temp1 =0,temp2=0, flags = 0;
+    while(idx1<idx2){
+        temp1 = linestream.find_first_of("=",idx1+1); 
+        temp2 = linestream.find_first_of(";\t",temp1+1); 
+        flags |= 1<< (ids.find(linestream.substr(idx1,temp1-idx1))->second);
+        idx1=temp2+1;
+    }
+    return flags;
+}
 
+unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> ids){
+    int temp1 =0, flags = 0;
+    while(idx1<idx2){
+        temp1 = linestream.find_first_of(":\t",idx1+1); 
+        flags |= 1<< (ids.find(linestream.substr(idx1,temp1-idx1))->second);
+        idx1=temp1+1;
+    }
+    /*for(int x=0;x<ids.size();x++){
+	cout << (flags & 1<<x) << " ";
+    }
+    cout << "\n";*/
+    return flags;
 }
 
 void parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string,int> formmap, map<string,int> contigmap,int count){
@@ -348,12 +380,13 @@ void parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<strin
     idx1=idx2+1;
     //INFO
     temp.clear();
-    //parseInfoFormat(linestream,infomap);
     idx2 = linestream.find_first_of("\t",idx1+1); 
-    cout << (linestream.substr(idx1,idx2-idx1)).c_str() << "\n";
+    misc[snpidx].info = parseInfo(linestream,idx1,idx2,infomap);
+    //cout << (linestream.substr(idx1,idx2-idx1)).c_str() << "\n";
     idx1=idx2+1;
-    //FORMAT*/
-    //parseInfoFormat(linestream,formmap);
+    //FORMAT
+    idx2 = linestream.find_first_of("\t",idx1+1); 
+    misc[snpidx].format = parseFormat(linestream,idx1,idx2,formmap);
     //cout <<  misc[snpidx].chrom << " " << misc[snpidx].pos << " "<< misc[snpidx].id << " " << misc[snpidx].ref << " " << misc[snpidx].alt << " " << misc[snpidx].qual << " " << misc[snpidx].filter << "\n";
 }
 
@@ -369,7 +402,7 @@ void loadMisc(MISC *&misc,int count,hid_t file){
     H5Tset_size(t2,5);
     t3 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t3,H5T_VARIABLE);
-    memtype = H5Tcreate(H5T_COMPOUND,sizeof(META_3));
+    memtype = H5Tcreate(H5T_COMPOUND,sizeof(MISC));
     H5Tinsert(memtype,"chrom",HOFFSET(MISC,chrom),H5T_NATIVE_INT);
     H5Tinsert(memtype,"pos",HOFFSET(MISC,pos),H5T_NATIVE_INT);
     H5Tinsert(memtype,"id",HOFFSET(MISC,id),t1);
@@ -377,10 +410,11 @@ void loadMisc(MISC *&misc,int count,hid_t file){
     H5Tinsert(memtype,"alt",HOFFSET(MISC,alt),t2);
     H5Tinsert(memtype,"qual",HOFFSET(MISC,qual),H5T_NATIVE_INT);
     H5Tinsert(memtype,"filter",HOFFSET(MISC,filter),t3);
+    H5Tinsert(memtype,"info",HOFFSET(MISC,info),H5T_NATIVE_UINT);
+    H5Tinsert(memtype,"format",HOFFSET(MISC,format),H5T_NATIVE_UINT);
     dset = H5Dcreate (file, name.c_str(), memtype, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     assert(status >=0);
     status = H5Dwrite(dset, memtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, misc);
-   
     assert(status >=0);
     /*free value pointers and variables*/
     status = H5Dclose(dset);
@@ -430,6 +464,8 @@ int main(int argc, char **argv){
     map<string,int> contigmap;
     map<string,int> infomap;
     map<string,int> formmap;
+    vector<pair<int,int> > infovec;
+    vector<pair<int,int> > formvec;
     string linestream;
     hid_t file;
     META_2* contig=NULL;
@@ -461,10 +497,10 @@ int main(int argc, char **argv){
     }
     loadHeader1(headmap,file); 
     loadHeader2(contig,file,contigcount,contigmap);
-    loadHeaderInfoFormat(false,info,infocount,infomap,file);
-    loadHeaderInfoFormat(true,format,formcount,formmap,file);
+    loadHeaderInfoFormat(false,info,infocount,infomap,infovec,file);
+    loadHeaderInfoFormat(true,format,formcount,formmap,formvec,file);
     int i=0, counter1=0,counter2=0;
-    for(i=0,counter1=0,counter2=0;getline(fp,linestream),i<5;i++,counter2++){ 
+    for(i=0,counter1=0,counter2=0;getline(fp,linestream),i<100;i++,counter2++){ 
         parseMisc(linestream,misc,infomap,formmap,contigmap,++counter1);
         parseGenotypes(linestream,call1,call2);
         //parseSubFields(linestream,);
