@@ -1,5 +1,5 @@
 /*
- *Last Update: Aug. 2, 2013
+ *Last Update: Aug. 6, 2013
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
  *
@@ -18,6 +18,7 @@
 #include <sys/resource.h>
 #include <vector>
 
+#define CHOP1 2000
 #define SIZE1 20
 #define SIZE2 20
 #define SIZE3 20
@@ -63,7 +64,7 @@ typedef struct{
     int qual;
     char* filter;
     unsigned int info;
-    //char* infoval; /*comma-separated values, ID in another table*/
+    char* infoval; /*semi-colon-separated values, ID in another table*/
     unsigned int format; 
 }MISC;
 
@@ -95,6 +96,10 @@ int checkType(char* type){
     else if(!strcmp(type,"Flag")) return 2;
     else if(!strcmp(type,"Character")) return 3;
     else if(!strcmp(type,"String")) return 4;
+}
+
+int checkNumber(META_3 data){
+    //cout << data.type << data.num << "\n";
 }
 
 void parseHeader1(string linestream, map<string,string> &headmap){
@@ -269,7 +274,7 @@ void loadHeaderInfoFormat(bool flag,META_3 *&data,int count,map<string,int> &map
     for(int x=0;x<count;x++){
         map.insert(pair<string,int>(string(data[x].id),x));
         vec.push_back(pair<int,int>(checkType(data[x].type),0));
-        cout << checkType(data[x].type) << " ";
+        //cout << vec[x].first << " " << vec[x].second << "\n";
         free(data[x].desc);
     }
     cout << "\n";
@@ -317,23 +322,28 @@ void loadSampleNames(string linestream, hid_t file){
     free(samples);
 }
 
-unsigned int parseInfo(string linestream,int idx1, int idx2, map<string,int> ids){
-    int temp1 =0,temp2=0, flags = 0;
+void parseInfo(string linestream,int idx1, int idx2, MISC *&misc, int pos, map<string,int> ids){
+    int temp1 =0,temp2=0;
+    unsigned int flags=0;
+    string values;
     while(idx1<idx2){
         temp1 = linestream.find_first_of("=",idx1+1); 
-        temp2 = linestream.find_first_of(";\t",temp1+1); 
+        temp2 = linestream.find_first_of(";\t",temp1+1);
+        values += linestream.substr(temp1+1,temp2-temp1-1)+ ";"; 
         flags |= 1<< (ids.find(linestream.substr(idx1,temp1-idx1))->second);
         idx1=temp2+1;
     }
-    return flags;
+    misc[pos].info = flags;
+    misc[pos].infoval = (char*)malloc((values.length()+1)*sizeof(char));
+    strcpy(misc[pos].infoval,values.c_str());
 }
 
 unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> ids){
-    int temp1 =0, flags = 0;
+    int temp =0, flags = 0;
     while(idx1<idx2){
-        temp1 = linestream.find_first_of(":\t",idx1+1); 
-        flags |= 1<< (ids.find(linestream.substr(idx1,temp1-idx1))->second);
-        idx1=temp1+1;
+        temp = linestream.find_first_of(":\t",idx1+1); 
+        flags |= 1<< (ids.find(linestream.substr(idx1,temp-idx1))->second);
+        idx1 = temp+1;
     }
     /*for(int x=0;x<ids.size();x++){
 	cout << (flags & 1<<x) << " ";
@@ -342,7 +352,23 @@ unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> i
     return flags;
 }
 
-void parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string,int> formmap, map<string,int> contigmap,int count){
+int parseAlt(string linestream,int idx1, int idx2,MISC *&misc,int pos){
+    int temp=0;
+    if(idx2-idx1!=1){ //check ALT
+        while(idx1<idx2){
+            temp = linestream.find_first_of(",\t",idx1+1);
+            if(temp-idx1>1){ //indels/structural variants are not supported
+		strcpy(misc[pos].alt,"X");
+	        return 1;
+	    }
+            idx1 = temp+1;
+        }
+    }
+    strcpy(misc[pos].alt,(linestream.substr(idx1,idx2-idx1)).c_str()); 
+    return 0;
+}
+
+void parseMisc(string linestream, MISC *&misc,map<string,int> infomap, vector<pair<int,int> > &infovec, map<string,int> formmap, vector<pair<int,int> > &formvec, map<string,int> contigmap,int count){
     int idx1=0,idx2=0,snpidx=count-1;
     string temp;
     misc = (MISC*)realloc(misc,count*sizeof(MISC));
@@ -366,6 +392,7 @@ void parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<strin
     idx1=idx2+1;
     //ALT
     idx2 = linestream.find_first_of("\t",idx1+1); 
+    parseAlt(linestream,idx1,idx2,misc,snpidx);
     strcpy(misc[snpidx].alt, (linestream.substr(idx1,idx2-idx1)).c_str());
     idx1=idx2+1;
     //QUAL
@@ -376,12 +403,12 @@ void parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<strin
     idx2 = linestream.find_first_of("\t",idx1+1); 
     temp = linestream.substr(idx1,idx2-idx1);
     misc[snpidx].filter = (char*)malloc(temp.length()*sizeof(char));
-    strcpy(misc[snpidx].filter,temp.c_str());
+    strcpy(misc[snpidx].filter,(linestream.substr(idx1,idx2-idx1)).c_str()); 
     idx1=idx2+1;
     //INFO
     temp.clear();
     idx2 = linestream.find_first_of("\t",idx1+1); 
-    misc[snpidx].info = parseInfo(linestream,idx1,idx2,infomap);
+    parseInfo(linestream,idx1,idx2,misc,snpidx,infomap);
     //cout << (linestream.substr(idx1,idx2-idx1)).c_str() << "\n";
     idx1=idx2+1;
     //FORMAT
@@ -411,6 +438,7 @@ void loadMisc(MISC *&misc,int count,hid_t file){
     H5Tinsert(memtype,"qual",HOFFSET(MISC,qual),H5T_NATIVE_INT);
     H5Tinsert(memtype,"filter",HOFFSET(MISC,filter),t3);
     H5Tinsert(memtype,"info",HOFFSET(MISC,info),H5T_NATIVE_UINT);
+    H5Tinsert(memtype,"infoval",HOFFSET(MISC,infoval),t3);
     H5Tinsert(memtype,"format",HOFFSET(MISC,format),H5T_NATIVE_UINT);
     dset = H5Dcreate (file, name.c_str(), memtype, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     assert(status >=0);
@@ -500,8 +528,8 @@ int main(int argc, char **argv){
     loadHeaderInfoFormat(false,info,infocount,infomap,infovec,file);
     loadHeaderInfoFormat(true,format,formcount,formmap,formvec,file);
     int i=0, counter1=0,counter2=0;
-    for(i=0,counter1=0,counter2=0;getline(fp,linestream),i<100;i++,counter2++){ 
-        parseMisc(linestream,misc,infomap,formmap,contigmap,++counter1);
+    for(i=0,counter1=0,counter2=0;getline(fp,linestream),i<10;i++,counter2++){ 
+        parseMisc(linestream,misc,infomap,infovec,formmap,formvec,contigmap,++counter1);
         parseGenotypes(linestream,call1,call2);
         //parseSubFields(linestream,);
         //break;
