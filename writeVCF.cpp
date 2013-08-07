@@ -7,6 +7,8 @@
  *This version only allows SNP calls (no indels/structural variants)
 */
 
+//LAST ERROR: corrupted double-linked list & invalid next size
+
 #include "hdf5.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +20,8 @@
 #include <sys/resource.h>
 #include <vector>
 
-#define CHOP1 2000
+#define CHUNKSIZE1 100
+#define SNP_CHUNK_CACHE 536870912 /*536870912 /*500MB*/
 #define SIZE1 20
 #define SIZE2 20
 #define SIZE3 20
@@ -417,12 +420,30 @@ void parseMisc(string linestream, MISC *&misc,map<string,int> infomap, vector<pa
     //cout <<  misc[snpidx].chrom << " " << misc[snpidx].pos << " "<< misc[snpidx].id << " " << misc[snpidx].ref << " " << misc[snpidx].alt << " " << misc[snpidx].qual << " " << misc[snpidx].filter << "\n";
 }
 
-void loadMisc(MISC *&misc,int count,hid_t file){
-    hid_t memtype,space,dset,t1,t2,t3;
-    hsize_t dim[1]={count};
+void clearMisc(MISC *&misc,int count){
+    for(int x=0;x<count;x++){
+	free(misc[x].filter);
+        free(misc[x].infoval);
+    }
+    free(misc);
+    misc=NULL;
+}
+
+
+void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &cparms,hid_t &dataprop,int chunk,string &name){
+    hid_t t1,t2,t3;
     herr_t status;
-    string name = varPath + varName + "_misc";
-    space = H5Screate_simple(1,dim,NULL);
+    hsize_t dim[1]={chunk};
+    hsize_t maxdim[1] = {H5S_UNLIMITED};
+    hsize_t chkdim[1] = {chunk};
+    hssize_t offset[1] = {0};
+
+    name = varPath + varName + "_misc";
+    space = H5Screate_simple(1,dim,maxdim); //create data space
+    cparms = H5Pcreate(H5P_DATASET_CREATE); //create chunk 
+    status = H5Pset_chunk(cparms,1,chkdim);
+
+    //Compound MISC datatype
     t1 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t1,SIZE5);
     t2 = H5Tcopy(H5T_C_S1);
@@ -440,22 +461,20 @@ void loadMisc(MISC *&misc,int count,hid_t file){
     H5Tinsert(memtype,"info",HOFFSET(MISC,info),H5T_NATIVE_UINT);
     H5Tinsert(memtype,"infoval",HOFFSET(MISC,infoval),t3);
     H5Tinsert(memtype,"format",HOFFSET(MISC,format),H5T_NATIVE_UINT);
-    dset = H5Dcreate (file, name.c_str(), memtype, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+
+    //create dataset access property list for MISC dataset
+    dataprop = H5Pcreate(H5P_DATASET_ACCESS);
+    status = H5Pset_chunk_cache(dataprop,H5D_CHUNK_CACHE_NSLOTS_DEFAULT,
+             SNP_CHUNK_CACHE,H5D_CHUNK_CACHE_W0_DEFAULT); /*set snp chunk size*/
+
+    dset = H5Dcreate (file, name.c_str(), memtype, space, H5P_DEFAULT, cparms, dataprop);
     assert(status >=0);
-    status = H5Dwrite(dset, memtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, misc);
-    assert(status >=0);
-    /*free value pointers and variables*/
-    status = H5Dclose(dset);
-    status = H5Sclose(space);
-    status = H5Tclose(memtype);
+   
+   /*free value pointers and variables*/
     status = H5Tclose(t1);
     status = H5Tclose(t2);
     status = H5Tclose(t3);
     assert(status>=0);
-    for(int x=0;x<count;x++){
-	free(misc[x].filter);
-    }
-    free(misc);
 }
 
 void parseGenotypes(string linestream,int **call1,int **call2){}
@@ -501,6 +520,7 @@ int main(int argc, char **argv){
     META_3* info=NULL, *format = NULL;
     int** call1 = NULL, **call2=NULL;
     int contigcount=0,infocount=0,formcount=0;
+
     /*create new file*/
     file = H5Fcreate(datafile.c_str(),H5F_ACC_TRUNC,H5P_DEFAULT,H5P_DEFAULT); 
     for(int i=0;getline(fp,linestream);i++){
@@ -527,17 +547,68 @@ int main(int argc, char **argv){
     loadHeader2(contig,file,contigcount,contigmap);
     loadHeaderInfoFormat(false,info,infocount,infomap,infovec,file);
     loadHeaderInfoFormat(true,format,formcount,formmap,formvec,file);
+
     int i=0, counter1=0,counter2=0;
-    for(i=0,counter1=0,counter2=0;getline(fp,linestream),i<10;i++,counter2++){ 
+    int REM1=row/CHUNKSIZE1;
+    hid_t memtype1,space1,memspace1,dset1,cparms1,dataprop1;
+    herr_t status;
+    hsize_t dim1[1]={0};
+    hsize_t maxdim1[1] = {H5S_UNLIMITED};
+    hsize_t offset1[1]={0};
+    hsize_t count1[1]={0};
+    hsize_t newsize1[1]={0};
+    string name;
+    
+    for(i=0,counter1=0,counter2=0;fp!=NULL,i<row;i++,counter2++){ 
+        getline(fp,linestream);
         parseMisc(linestream,misc,infomap,infovec,formmap,formvec,contigmap,++counter1);
         parseGenotypes(linestream,call1,call2);
+        if(counter1==CHUNKSIZE1 || fp==NULL){
+            if(i+1==CHUNKSIZE1){ //first slab
+                //set compound datatype and spaces
+  		setH5MiscFormat(file,memtype1,space1,dset1,cparms1,dataprop1,counter1,name);
+                memspace1 = H5Dget_space(dset1);
+                dim1[0]=counter1;
+                newsize1[0]=counter1;
+                count1[0]=counter1;
+                //write first slab
+            	status = H5Dwrite(dset1, memtype1, memspace1, space1, H5P_DEFAULT, misc); 
+		clearMisc(misc,counter1); 
+	    }else{ 
+		offset1[0]=newsize1[0];
+          	//extend data later for the 2nd to the last slab
+                if(fp==NULL && counter1>0){
+ 		     count1[0] = REM1;
+		     newsize1[0]=newsize1[0]+REM1;
+		     dim1[0]=REM1;
+    		     memspace1 = H5Screate_simple(1,dim1,maxdim1); 
+		}else{
+		     newsize1[0]=newsize1[0]+CHUNKSIZE1; 
+		}
+		status = H5Dset_extent(dset1,newsize1);
+	 	space1 = H5Dget_space(dset1);
+                status = H5Sselect_hyperslab(space1, H5S_SELECT_SET,
+ 			(const hsize_t*)offset1,NULL, count1, NULL);
+		status = H5Dwrite(dset1,memtype1,memspace1,space1,H5P_DEFAULT,misc);
+                status = H5Sclose(space1);
+	    }  
+            counter1=0;
+        }
         //parseSubFields(linestream,);
         //break;
     }
-    loadMisc(misc,counter1,file);
+
+    /*free value pointers and variables*/
     contigmap.clear(); 
     infomap.clear();
     formmap.clear();
+    infovec.clear();
+    formvec.clear();
+    status = H5Dclose(dset1);
+    status = H5Tclose(memtype1);
+    status = H5Sclose(memspace1);
+    status = H5Pclose(cparms1);
+    status= H5Pclose (dataprop1);
     H5Fclose(file);
     
 }
