@@ -7,7 +7,7 @@
  *This version only allows SNP calls (no indels/structural variants)
 */
 
-//LAST ERROR: corrupted double-linked list & invalid next size
+//LAST ERROR: memory leak in parseInfo
 
 #include "hdf5.h"
 #include <stdio.h>
@@ -20,7 +20,7 @@
 #include <sys/resource.h>
 #include <vector>
 
-#define CHUNKSIZE1 100
+#define CHUNKSIZE1 1000
 #define SNP_CHUNK_CACHE 536870912 /*536870912 /*500MB*/
 #define SIZE1 20
 #define SIZE2 20
@@ -63,7 +63,7 @@ typedef struct{
     int pos;
     char id[SIZE5];
     char ref; 
-    char alt[5];
+    char alt[7];
     int qual;
     char* filter;
     unsigned int info;
@@ -326,19 +326,19 @@ void loadSampleNames(string linestream, hid_t file){
 }
 
 void parseInfo(string linestream,int idx1, int idx2, MISC *&misc, int pos, map<string,int> ids){
-    int temp1 =0,temp2=0;
+    int temp1=0,temp2=idx2;
     unsigned int flags=0;
-    string values;
+    string values(""); cout<< idx1 << "-" << idx2 << "\t";
     while(idx1<idx2){
-        temp1 = linestream.find_first_of("=",idx1+1); 
-        temp2 = linestream.find_first_of(";\t",temp1+1);
-        values += linestream.substr(temp1+1,temp2-temp1-1)+ ";"; 
-        flags |= 1<< (ids.find(linestream.substr(idx1,temp1-idx1))->second);
+        //temp1 = linestream.find_first_of("=",idx1+1); 
+        //temp2 = linestream.find_first_of(";\t",temp1+1);
+        //values += linestream.substr(temp1+1,temp2-temp1-1)+ ";"; 
+        //flags |= 1<< (ids.find(linestream.substr(idx1,temp1-idx1))->second);
         idx1=temp2+1;
     }
     misc[pos].info = flags;
-    misc[pos].infoval = (char*)malloc((values.length()+1)*sizeof(char));
-    strcpy(misc[pos].infoval,values.c_str());
+    //misc[pos].infoval = (char*)malloc((values.length()+1)*sizeof(char));
+    //strcpy(misc[pos].infoval,values.c_str());*/
 }
 
 unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> ids){
@@ -356,25 +356,34 @@ unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> i
 }
 
 int parseAlt(string linestream,int idx1, int idx2,MISC *&misc,int pos){
-    int temp=0;
-    if(idx2-idx1!=1){ //check ALT
-        while(idx1<idx2){
-            temp = linestream.find_first_of(",\t",idx1+1);
-            if(temp-idx1>1){ //indels/structural variants are not supported
+    int temp1=idx1,temp2=idx2; 
+    if(idx2-idx1>1){ //check ALT
+        while(temp1<idx2){
+            temp2 = linestream.find_first_of(",\t",temp1+1); /*ALT must be single-char nucleotides*/
+            if(temp2-temp1>1){ //indels/structural variants are not supported
 		strcpy(misc[pos].alt,"X");
 	        return 1;
 	    }
-            idx1 = temp+1;
+            temp1 = temp2+1;
         }
+	if(idx2-idx1>5){
+	    strcpy(misc[pos].alt,"X"); 
+	    return 1;
+	}
     }
+    //cout <<linestream.substr(idx1,idx2-idx1) << "\n";
     strcpy(misc[pos].alt,(linestream.substr(idx1,idx2-idx1)).c_str()); 
     return 0;
 }
 
-void parseMisc(string linestream, MISC *&misc,map<string,int> infomap, vector<pair<int,int> > &infovec, map<string,int> formmap, vector<pair<int,int> > &formvec, map<string,int> contigmap,int count){
+int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, vector<pair<int,int> > &infovec, map<string,int> formmap, vector<pair<int,int> > &formvec, map<string,int> contigmap,int count){
     int idx1=0,idx2=0,snpidx=count-1;
-    string temp;
+    string temp; 
     misc = (MISC*)realloc(misc,count*sizeof(MISC));
+    if(misc==NULL){
+ 	cout << "ERROR: Insufficient memory. Adjust the chunksize." << endl;;
+	return 1;
+    }
     //chromID
     idx2 = linestream.find_first_of("\t",idx1+1); 
     misc[snpidx].chrom = contigmap.find(linestream.substr(idx1,idx2-idx1))->second;
@@ -396,7 +405,6 @@ void parseMisc(string linestream, MISC *&misc,map<string,int> infomap, vector<pa
     //ALT
     idx2 = linestream.find_first_of("\t",idx1+1); 
     parseAlt(linestream,idx1,idx2,misc,snpidx);
-    strcpy(misc[snpidx].alt, (linestream.substr(idx1,idx2-idx1)).c_str());
     idx1=idx2+1;
     //QUAL
     idx2 = linestream.find_first_of("\t",idx1+1); 
@@ -405,25 +413,24 @@ void parseMisc(string linestream, MISC *&misc,map<string,int> infomap, vector<pa
     //FILTER
     idx2 = linestream.find_first_of("\t",idx1+1); 
     temp = linestream.substr(idx1,idx2-idx1);
-    misc[snpidx].filter = (char*)malloc(temp.length()*sizeof(char));
+    misc[snpidx].filter = (char*)malloc((temp.length()+1)*sizeof(char));
     strcpy(misc[snpidx].filter,(linestream.substr(idx1,idx2-idx1)).c_str()); 
     idx1=idx2+1;
     //INFO
-    temp.clear();
     idx2 = linestream.find_first_of("\t",idx1+1); 
-    parseInfo(linestream,idx1,idx2,misc,snpidx,infomap);
-    //cout << (linestream.substr(idx1,idx2-idx1)).c_str() << "\n";
+    //parseInfo(linestream,idx1,idx2,misc,snpidx,infomap);
     idx1=idx2+1;
     //FORMAT
     idx2 = linestream.find_first_of("\t",idx1+1); 
     misc[snpidx].format = parseFormat(linestream,idx1,idx2,formmap);
     //cout <<  misc[snpidx].chrom << " " << misc[snpidx].pos << " "<< misc[snpidx].id << " " << misc[snpidx].ref << " " << misc[snpidx].alt << " " << misc[snpidx].qual << " " << misc[snpidx].filter << "\n";
+    return 0;
 }
 
 void clearMisc(MISC *&misc,int count){
     for(int x=0;x<count;x++){
 	free(misc[x].filter);
-        free(misc[x].infoval);
+        //free(misc[x].infoval);
     }
     free(misc);
     misc=NULL;
@@ -482,8 +489,8 @@ void parseGenotypes(string linestream,int **call1,int **call2){}
 int main(int argc, char **argv){
     const rlim_t STACK_SIZE = 1000*1024*1024; 
     struct rlimit rl;
-    //rl.rlim_cur = STACK_SIZE;
-    //int ret = setrlimit(RLIMIT_STACK,&rl);
+    rl.rlim_cur = STACK_SIZE;
+    int ret = setrlimit(RLIMIT_STACK,&rl);
 
     parseArgs(argc, argv);
     if (datafile.empty() || inputfile.empty() || varName.empty()
@@ -547,7 +554,7 @@ int main(int argc, char **argv){
     loadHeader2(contig,file,contigcount,contigmap);
     loadHeaderInfoFormat(false,info,infocount,infomap,infovec,file);
     loadHeaderInfoFormat(true,format,formcount,formmap,formvec,file);
-
+    
     int i=0, counter1=0,counter2=0;
     int REM1=row/CHUNKSIZE1;
     hid_t memtype1,space1,memspace1,dset1,cparms1,dataprop1;
@@ -559,9 +566,12 @@ int main(int argc, char **argv){
     hsize_t newsize1[1]={0};
     string name;
     
-    for(i=0,counter1=0,counter2=0;fp!=NULL,i<row;i++,counter2++){ 
+    for(i=0,counter1=0,counter2=0;fp!=NULL && i<row;i++,counter2++){ 
         getline(fp,linestream);
-        parseMisc(linestream,misc,infomap,infovec,formmap,formvec,contigmap,++counter1);
+        if(parseMisc(linestream,misc,infomap,infovec,formmap,formvec,contigmap,++counter1)){
+	    cout << "REPORT: Failed to complete writing the data" << endl;
+	    break;
+	}
         parseGenotypes(linestream,call1,call2);
         if(counter1==CHUNKSIZE1 || fp==NULL){
             if(i+1==CHUNKSIZE1){ //first slab
@@ -572,15 +582,15 @@ int main(int argc, char **argv){
                 newsize1[0]=counter1;
                 count1[0]=counter1;
                 //write first slab
-            	status = H5Dwrite(dset1, memtype1, memspace1, space1, H5P_DEFAULT, misc); 
+            	//status = H5Dwrite(dset1, memtype1, memspace1, space1, H5P_DEFAULT, misc); 
 		clearMisc(misc,counter1); 
 	    }else{ 
 		offset1[0]=newsize1[0];
           	//extend data later for the 2nd to the last slab
                 if(fp==NULL && counter1>0){
- 		     count1[0] = REM1;
-		     newsize1[0]=newsize1[0]+REM1;
-		     dim1[0]=REM1;
+ 		     count1[0] = counter1;
+		     newsize1[0]=newsize1[0]+counter1;
+		     dim1[0]=counter1;
     		     memspace1 = H5Screate_simple(1,dim1,maxdim1); 
 		}else{
 		     newsize1[0]=newsize1[0]+CHUNKSIZE1; 
@@ -589,15 +599,16 @@ int main(int argc, char **argv){
 	 	space1 = H5Dget_space(dset1);
                 status = H5Sselect_hyperslab(space1, H5S_SELECT_SET,
  			(const hsize_t*)offset1,NULL, count1, NULL);
-		status = H5Dwrite(dset1,memtype1,memspace1,space1,H5P_DEFAULT,misc);
-                status = H5Sclose(space1);
-	    }  
+		//status = H5Dwrite(dset1,memtype1,memspace1,space1,H5P_DEFAULT,misc);
+                clearMisc(misc,counter1);  
+                //status = H5Sclose(space1); 
+	    } 
+	    cout << "Chunk" << (i+1)/counter1 << "\n";
             counter1=0;
         }
         //parseSubFields(linestream,);
-        //break;
     }
-
+    
     /*free value pointers and variables*/
     contigmap.clear(); 
     infomap.clear();
