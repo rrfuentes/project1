@@ -7,8 +7,6 @@
  *This version only allows SNP calls (no indels/structural variants)
 */
 
-//LAST ERROR: memory leak in parseInfo
-
 #include "hdf5.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +19,7 @@
 #include <vector>
 
 #define CHUNKSIZE1 5000
-#define CHUNKSIZE2_1 1000 
+#define CHUNKSIZE2_1 7000 
 #define CHUNKSIZE2_2 2 
 #define SNP_CHUNK_CACHE 268435456 /*250MB*/
 #define SIZE1 20
@@ -518,6 +516,7 @@ void setH5CallFormat(hid_t file, hid_t &space,hid_t &dset,hid_t &cparms,hid_t &d
     name = varPath + varName + "_call";
     space = H5Screate_simple(2,dim,maxdim); //create data space
     cparms = H5Pcreate(H5P_DATASET_CREATE); //create chunk 
+    status = H5Pset_szip(cparms,H5_SZIP_NN_OPTION_MASK,8); //compression
     status = H5Pset_chunk(cparms,2,chkdim);
 
     //create dataset access property list for MISC dataset
@@ -537,8 +536,8 @@ void parseGenotypes(string linestream,int **&call,int snpidx,int offset,vector<c
  	while(idx1<last){
             idx2 = linestream.find_first_of("\t",idx1+2); 
 	    if(idx2==linestream.npos) idx2=last;
-            idx1 = idx2+1;
 	    call[snpidx][counter] = -1;
+	    idx1 = idx2+1;
             counter++;
         }
     }else{ //SNPs
@@ -687,7 +686,8 @@ int main(int argc, char **argv){
 
     //create var for misc and genotype calls
     call=(int**)malloc(CHUNKSIZE2_1*sizeof(int*));
-    for(int x=0;x<CHUNKSIZE2_1;x++) call[x]=(int*)calloc(col,sizeof(int));
+    call[0]=(int*)malloc(CHUNKSIZE2_1*col*sizeof(int));
+    for(int x=0;x<CHUNKSIZE2_1;x++) call[x]=call[0]+x*col;
 
     misc = (MISC*)malloc(CHUNKSIZE1*sizeof(MISC));
     if(misc==NULL){
@@ -697,7 +697,7 @@ int main(int argc, char **argv){
     }
     setAlleleStates(states); 	
 
-    for(i=0;fp!=NULL && i<row;i++){ 
+    for(i=0;fp!=NULL;i++){ 
         getline(fp,linestream);
         lastidx = parseMisc(linestream,misc,infomap,infovec,formmap,formvec,contigmap,callvec,counter1);
         counter1++;
@@ -733,8 +733,6 @@ int main(int argc, char **argv){
         }
 
         parseGenotypes(linestream,call,counter2,lastidx+1,callvec,states);
-        for(int x=0;x<6;x++) cout << call[counter2][x] <<" ";
-	cout <<"\n";
         counter2++;
         if(counter2==CHUNKSIZE2_1 || fp==NULL){
             if(i+1==CHUNKSIZE2_1){ //first slab
@@ -742,8 +740,7 @@ int main(int argc, char **argv){
   		setH5CallFormat(file,space2,dset2,cparms2,dataprop2,counter2,col,name2);
                 memspace2 = H5Dget_space(dset2);
                 //write first slab
-            	status = H5Dwrite(dset2, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, call); 
-                
+            	status = H5Dwrite(dset2, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &call[0][0]); 
 	    }else{ 
 		offset2[0]=newsize2[0];
           	//extend data later for the 2nd to the last slab
@@ -759,7 +756,7 @@ int main(int argc, char **argv){
 	 	space2 = H5Dget_space(dset2);
                 status = H5Sselect_hyperslab(space2, H5S_SELECT_SET,
  			(const hsize_t*)offset2,NULL, count2, NULL);
-		status = H5Dwrite(dset2,H5T_NATIVE_INT,memspace2,space2,H5P_DEFAULT,call); 
+		status = H5Dwrite(dset2,H5T_NATIVE_INT,memspace2,space2,H5P_DEFAULT,&call[0][0]); 
                 status = H5Sclose(space2); 
 	    } 
 	    cout << "Call-Chunk" << (i+1)/CHUNKSIZE2_1 << "\n";
@@ -785,7 +782,7 @@ int main(int argc, char **argv){
     status = H5Sclose(memspace2);
     status = H5Pclose(cparms2);
     status= H5Pclose (dataprop2);
-    for(int x=0;x<CHUNKSIZE2_1;x++) free(call[x]);	
+    free(call[0]);	
     free(misc);
     H5Fclose(file);
     
