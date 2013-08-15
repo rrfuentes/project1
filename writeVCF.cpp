@@ -19,7 +19,7 @@
 #include <vector>
 
 #define CHUNKSIZE1 5000
-#define CHUNKSIZE2_1 7000 
+#define CHUNKSIZE2_1 10000 
 #define CHUNKSIZE2_2 2 
 #define SNP_CHUNK_CACHE 268435456 /*250MB*/
 #define SIZE1 20
@@ -35,8 +35,6 @@ static string datafile;
 static string inputfile;
 static string varName;
 static string varPath;
-static int col=0;
-static int row=0;
 static int indelcount = 0;
 
 /*fileformat,filter,alt,assembly,pedigree,sample,unifiedgenotyper,INFO,FORMAT*/
@@ -85,10 +83,6 @@ void parseArgs(int argc, char **argv) {
         case 'P': varPath = optarg; break; //variable path string in the file
         case 'n':
         case 'N': varName = optarg; break; //variable name string in the file
-	case 'r':
-	case 'R': row = atoi(optarg); break; //number of genotype rows 
-        case 'c':
-	case 'C': col = atoi(optarg); break; //number of samples 
 	default: break;
         } // switch
     } // while
@@ -139,7 +133,7 @@ void loadHeader1(map<string,string> &headmap,hid_t file){
     hid_t t1,t2;
     hsize_t dim[1]={count};
     herr_t status;
-    string name = varPath + varName + "_meta";
+    string name = varPath + varName + "/meta/meta";
     for (map<string,string>::iterator it=headmap.begin(); it!=headmap.end();++it){
 	strcpy(header[x].field, it->first.c_str());
 	header[x].value = (char*)malloc(it->second.length()*sizeof(char));
@@ -176,7 +170,7 @@ void loadHeader2(META_2 *&contig,hid_t file,int count,map<string,int> &contigmap
     hid_t memtype,space,dset,t1;
     hsize_t dim[1]={count};
     herr_t status;
-    string name= varPath + varName + "_contigs";
+    string name= varPath + varName + "/meta/contigs";
     space = H5Screate_simple(1,dim,NULL);
     t1 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t1,SIZE2);
@@ -248,8 +242,8 @@ void loadHeaderInfoFormat(bool flag,META_3 *&data,int count,map<string,int> &map
     hsize_t dim[1]={count};
     herr_t status;
     string name;
-    if(flag) name= varPath + varName + "_format";
-    else name= varPath + varName + "_info";
+    if(flag) name= varPath + varName + "/meta/format";
+    else name= varPath + varName + "/meta/info";
     space = H5Screate_simple(1,dim,NULL);
     t1 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t1,SIZE4);
@@ -285,7 +279,7 @@ void loadHeaderInfoFormat(bool flag,META_3 *&data,int count,map<string,int> &map
     free(data);
 }
 
-void loadSampleNames(string linestream, hid_t file){
+int loadSampleNames(string linestream, hid_t file){
     char** samples=NULL;
     int idx1=0,idx2=0,x=0,count=0;
     for(x=0;x<9;x++){ //ignore fixed table headername
@@ -306,9 +300,9 @@ void loadSampleNames(string linestream, hid_t file){
     count=x;
     
     hid_t memtype,space,dset,t1;
-    hsize_t dim[1]={x};
+    hsize_t dim[1]={count};
     herr_t status;
-    string name= varPath + varName + "_samples";
+    string name= varPath + varName + "/samples";
     space = H5Screate_simple(1,dim,NULL);
     t1 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t1,H5T_VARIABLE);
@@ -322,8 +316,10 @@ void loadSampleNames(string linestream, hid_t file){
     status = H5Sclose(space);
     status = H5Tclose(t1);
     assert(status>=0);
-    for(x=0;x<count;x++) free(samples[x]);
+    for(int x=0;x<count;x++) free(samples[x]);
     free(samples);
+    return count;
+    
 }
 
 void parseInfo(string &linestream,int idx1, int idx2, MISC*& misc, int pos, map<string,int> ids){
@@ -450,8 +446,6 @@ void clearMisc(MISC *&misc,int count){
 	free(misc[x].filter);
         free(misc[x].infoval);
     }
-    //free(misc);
-    //misc=NULL;
 }
 
 
@@ -463,7 +457,7 @@ void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &c
     hsize_t chkdim[1] = {chunk};
     hssize_t offset[1] = {0};
 
-    name = varPath + varName + "_misc";
+    name = varPath + varName + "/misc";
     space = H5Screate_simple(1,dim,maxdim); //create data space
     cparms = H5Pcreate(H5P_DATASET_CREATE); //create chunk 
     status = H5Pset_chunk(cparms,1,chkdim);
@@ -483,9 +477,9 @@ void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &c
     H5Tinsert(memtype,"alt",HOFFSET(MISC,alt),t2);
     H5Tinsert(memtype,"qual",HOFFSET(MISC,qual),H5T_NATIVE_INT);
     H5Tinsert(memtype,"filter",HOFFSET(MISC,filter),t3);
-    H5Tinsert(memtype,"info",HOFFSET(MISC,info),H5T_NATIVE_UINT);
+    H5Tinsert(memtype,"infobit",HOFFSET(MISC,info),H5T_NATIVE_UINT);
     H5Tinsert(memtype,"infoval",HOFFSET(MISC,infoval),t3);
-    H5Tinsert(memtype,"format",HOFFSET(MISC,format),H5T_NATIVE_UINT);
+    H5Tinsert(memtype,"formatbit",HOFFSET(MISC,format),H5T_NATIVE_UINT);
 
     //create dataset access property list for MISC dataset
     dataprop = H5Pcreate(H5P_DATASET_ACCESS);
@@ -502,23 +496,19 @@ void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &c
     assert(status>=0);
 }
 
-void clearCall(int** call){
-    
-}
-
 void setH5CallFormat(hid_t file, hid_t &space,hid_t &dset,hid_t &cparms,hid_t &dataprop,int size1,int size2,string &name){
     herr_t status;
     hsize_t dim[2]={size1,size2};
     hsize_t maxdim[2] = {H5S_UNLIMITED,size2};
-    hsize_t chkdim[2] = {size1,size2/CHUNKSIZE2_2};
+    hsize_t chkdim[2] = {size1,CHUNKSIZE2_2};
     hssize_t offset[2] = {0,0};
 
-    name = varPath + varName + "_call";
+    name = varPath + varName + "/call";
     space = H5Screate_simple(2,dim,maxdim); //create data space
     cparms = H5Pcreate(H5P_DATASET_CREATE); //create chunk 
     status = H5Pset_szip(cparms,H5_SZIP_NN_OPTION_MASK,8); //compression
     status = H5Pset_chunk(cparms,2,chkdim);
-
+    
     //create dataset access property list for MISC dataset
     dataprop = H5Pcreate(H5P_DATASET_ACCESS);
     status = H5Pset_chunk_cache(dataprop,H5D_CHUNK_CACHE_NSLOTS_DEFAULT,
@@ -532,7 +522,7 @@ void parseGenotypes(string linestream,int **&call,int snpidx,int offset,vector<c
     int idx1 = offset, idx2 = offset,x=0,counter=0; 
     int last = linestream.length(); 
     string temp;
-    if(callvec[0]=='X' || callvec[1]=='X'){ //filter indels and structural variants
+    if(callvec[0]=='X' || callvec[1]=='X' || callvec[0]=='.' || callvec[1]=='.'){ //filter indels and structural variants
  	while(idx1<last){
             idx2 = linestream.find_first_of("\t",idx1+2); 
 	    if(idx2==linestream.npos) idx2=last;
@@ -545,21 +535,16 @@ void parseGenotypes(string linestream,int **&call,int snpidx,int offset,vector<c
             idx2 = linestream.find_first_of("\t",idx1+2); 
 	    if(idx2==linestream.npos) idx2=last;
             //cout << linestream.substr(idx1,idx2-idx1) << "\t";
-	
+
+	    //0-Ref 1..N-Alt
             //get Ref
-            if(linestream[idx1]=='.') temp = "N";
-            else{ 
-	    	x=linestream[idx1]-48; 
-	    	temp = callvec[x];
-    	    }
-        
-            //get Alt
-	    if(linestream[idx1+2]=='.') temp += "N";       
-            else{ 
-	        x=linestream[idx1+2]-48; 
-	    	temp += callvec[x];
-	    }
-            call[snpidx][counter] = states.find(temp)->second; //save the call
+	    x=linestream[idx1]-48; //convert from char to int  
+	    temp = callvec[x]; //get the call
+            //get Alt 
+	    x=linestream[idx1+2]-48; //convert from char to int  
+	    temp += callvec[x]; //get the call
+
+            call[snpidx][counter] = states.find(temp)->second; //save the call code
             idx1 = idx2+1;
             counter++;
     	}
@@ -596,6 +581,7 @@ void setAlleleStates(map<string,int> &Calls){
     Calls["NN"]=24;
 }
 
+
 int main(int argc, char **argv){
     const rlim_t STACK_SIZE = 1000*1024*1024; 
     struct rlimit rl;
@@ -604,14 +590,12 @@ int main(int argc, char **argv){
 
     parseArgs(argc, argv);
     if (datafile.empty() || inputfile.empty() || varName.empty()
-	|| varPath.empty()  || col==0 || row==0) {
+	|| varPath.empty()) {
         cerr << "Usage:\n" << *argv
                   << " -f data-file-name\n"
 		  << " -i input-data-file-name\n"
 		  << " -n variable-name\n"
                   << " -p variable-path\n"
-		  << " -r number of SNPs\n"
-                  << " -c number of samples\n"
                   << endl;
         return -1;
     }
@@ -632,16 +616,20 @@ int main(int argc, char **argv){
     vector<pair<int,int> > infovec;
     vector<pair<int,int> > formvec;
     vector<char> callvec;
-    string linestream;
-    hid_t file;
+    string linestream,groupname;
+    hid_t file,group,group_sub;
     META_2* contig=NULL;
     MISC* misc = NULL;
     META_3* info=NULL, *format = NULL;
     int **call=NULL;
-    int contigcount=0,infocount=0,formcount=0;
-
+    int contigcount=0,infocount=0,formcount=0,samcount=0;
+    
     /*create new file*/
+    groupname=varPath+varName;
     file = H5Fcreate(datafile.c_str(),H5F_ACC_TRUNC,H5P_DEFAULT,H5P_DEFAULT); 
+    group = H5Gcreate (file, groupname.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    groupname += "/meta"; 
+    group_sub = H5Gcreate (file, groupname.c_str(), H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     for(int i=0;getline(fp,linestream);i++){
         if(linestream.substr(0,2) == "##"){
             if(linestream.substr(0,8) == "##contig"){
@@ -654,7 +642,7 @@ int main(int argc, char **argv){
  	    	parseHeader1(linestream,headmap); 
 	    }
 	}else if(linestream.substr(0,6) == "#CHROM"){ 
-            loadSampleNames(linestream,file);
+            samcount = loadSampleNames(linestream,file);
 	    break; 
 	}else{
             cout << "ERROR: Failed to write the input file. Unknown format of header entry. \"" << "\"" << endl;
@@ -672,22 +660,22 @@ int main(int argc, char **argv){
     hid_t space2,memspace2,dset2,cparms2,dataprop2;
     herr_t status;
     hsize_t dim1[1]={CHUNKSIZE1}; 
-    hsize_t dim2[2]={CHUNKSIZE2_1,col};
+    hsize_t dim2[2]={CHUNKSIZE2_1,samcount};
     hsize_t maxdim1[1] = {H5S_UNLIMITED};
-    hsize_t maxdim2[2] = {H5S_UNLIMITED,col};
+    hsize_t maxdim2[2] = {H5S_UNLIMITED,samcount};
     hssize_t offset1[1]={0};
     hssize_t offset2[2]={0,0};
     hsize_t count1[1]={CHUNKSIZE1};
-    hsize_t count2[2]={CHUNKSIZE2_1,col};
+    hsize_t count2[2]={CHUNKSIZE2_1,samcount};
     hsize_t newsize1[1]={CHUNKSIZE1};
-    hsize_t newsize2[2]={CHUNKSIZE2_1,col};
+    hsize_t newsize2[2]={CHUNKSIZE2_1,samcount};
     string name1;
     string name2;
 
     //create var for misc and genotype calls
     call=(int**)malloc(CHUNKSIZE2_1*sizeof(int*));
-    call[0]=(int*)malloc(CHUNKSIZE2_1*col*sizeof(int));
-    for(int x=0;x<CHUNKSIZE2_1;x++) call[x]=call[0]+x*col;
+    call[0]=(int*)malloc(CHUNKSIZE2_1*samcount*sizeof(int));
+    for(int x=0;x<CHUNKSIZE2_1;x++) call[x]=call[0]+x*samcount;
 
     misc = (MISC*)malloc(CHUNKSIZE1*sizeof(MISC));
     if(misc==NULL){
@@ -697,10 +685,14 @@ int main(int argc, char **argv){
     }
     setAlleleStates(states); 	
 
-    for(i=0;fp!=NULL;i++){ 
+    for(i=0;fp!=NULL && i<10000;i++){ 
         getline(fp,linestream);
-        lastidx = parseMisc(linestream,misc,infomap,infovec,formmap,formvec,contigmap,callvec,counter1);
-        counter1++;
+	if(fp!=NULL){
+            lastidx = parseMisc(linestream,misc,infomap,infovec,formmap,formvec,contigmap,callvec,counter1);
+            counter1++;
+            parseGenotypes(linestream,call,counter2,lastidx+1,callvec,states);
+            counter2++;
+        }
         if(counter1==CHUNKSIZE1 || fp==NULL){
             if(i+1==CHUNKSIZE1){ //first slab
                 //set compound datatype and spaces
@@ -732,12 +724,10 @@ int main(int argc, char **argv){
             counter1=0;
         }
 
-        parseGenotypes(linestream,call,counter2,lastidx+1,callvec,states);
-        counter2++;
         if(counter2==CHUNKSIZE2_1 || fp==NULL){
             if(i+1==CHUNKSIZE2_1){ //first slab
                 //set compound datatype and spaces
-  		setH5CallFormat(file,space2,dset2,cparms2,dataprop2,counter2,col,name2);
+  		setH5CallFormat(file,space2,dset2,cparms2,dataprop2,counter2,samcount,name2);
                 memspace2 = H5Dget_space(dset2);
                 //write first slab
             	status = H5Dwrite(dset2, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &call[0][0]); 
@@ -748,7 +738,7 @@ int main(int argc, char **argv){
  		     count2[0] = counter2;
 		     newsize2[0]=newsize2[0]+counter2;
 		     dim2[0]=counter2;
-    		     memspace2 = H5Screate_simple(2,dim2,maxdim2); 
+    		     memspace2 = H5Screate_simple(2,dim2,maxdim2); cout << "here";
 		}else{
 		     newsize2[0]=newsize2[0]+counter2; 
 		}
@@ -765,7 +755,7 @@ int main(int argc, char **argv){
         //parseSubFields(linestream,)
        
     }
-    clearCall(call);
+
     cout << "Indel/Structural Variant Count:" << indelcount << "\n";
     /*free value pointers and variables*/
     contigmap.clear(); 
@@ -782,6 +772,7 @@ int main(int argc, char **argv){
     status = H5Sclose(memspace2);
     status = H5Pclose(cparms2);
     status= H5Pclose (dataprop2);
+    free(call);
     free(call[0]);	
     free(misc);
     H5Fclose(file);
