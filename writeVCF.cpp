@@ -65,8 +65,6 @@ int main(int argc, char **argv){
     map<string,int> contigmap;
     map<string,int> infomap;
     map<string,int> formmap;
-    vector<pair<int,int> > infovec;
-    vector<pair<int,int> > formvec;
     vector<char> callvec;
     string linestream,inipath,gpath1,gpath2;
     hid_t file,group,group_sub1,group_sub2;
@@ -106,8 +104,8 @@ int main(int argc, char **argv){
     }
     loadHeader1(headmap,file,gpath1); 
     loadHeader2(contig,file,contigcount,contigmap,gpath1);
-    loadHeaderInfoFormat(false,info,infocount,infomap,infovec,file,gpath1);
-    loadHeaderInfoFormat(true,format,formcount,formmap,formvec,file,gpath1);
+    loadHeaderInfoFormat(false,info,infocount,infomap,file,gpath1);
+    loadHeaderInfoFormat(true,format,formcount,formmap,file,gpath1);
     
     int i=0, counter1=0,counter2=0,lastidx;
     hid_t memtype1,space1,memspace1,dset1,cparms1,dataprop1;
@@ -142,7 +140,7 @@ int main(int argc, char **argv){
 	if(fp!=NULL){
             lastidx = parseMisc(linestream,misc,infomap,formmap,contigmap,callvec,counter1,indelcount);
             counter1++;
-            parseGenotypes(linestream,call,counter2,lastidx+1,callvec,states,formmap,formvec,misc[counter1-1].format);
+            parseGenotypes(linestream,call,counter2,lastidx+1,callvec,states,format,formmap,misc[counter1-1].format);
             counter2++;
         }
         if(counter1==CHUNKSIZE1 || fp==NULL){
@@ -213,8 +211,6 @@ int main(int argc, char **argv){
     contigmap.clear(); 
     infomap.clear();
     formmap.clear();
-    infovec.clear();
-    formvec.clear();
     status = H5Dclose(dset1);
     status = H5Tclose(memtype1);
     status = H5Sclose(memspace1);
@@ -227,6 +223,8 @@ int main(int argc, char **argv){
     status = H5Gclose(group);
     status = H5Gclose(group_sub1);
     status = H5Gclose(group_sub2);
+    free(info);
+    free(format);
     free(call[0]);
     free(call);	
     free(misc);

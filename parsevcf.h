@@ -15,6 +15,7 @@
 #include <assert.h>
 #include <sys/resource.h>
 #include <vector>
+#include <math.h>
 
 #define CHUNKSIZE1 5
 #define CHUNKSIZE2_1 5 
@@ -61,12 +62,12 @@ typedef struct{
     unsigned int format; 
 }MISC;
 
-int checkType(char* type){
-    if(!strcmp(type,"Integer")) return 0;
-    else if(!strcmp(type,"Float")) return 1;
-    else if(!strcmp(type,"Flag")) return 2;
-    else if(!strcmp(type,"Character")) return 3;
-    else if(!strcmp(type,"String")) return 4;
+char checkType(char* type){
+    if(!strcmp(type,"Integer")) return '0';
+    else if(!strcmp(type,"Float")) return '1';
+    else if(!strcmp(type,"Flag")) return '2';
+    else if(!strcmp(type,"Character")) return '3';
+    else if(!strcmp(type,"String")) return '4';
 }
 
 int checkNumber(META_3 data){
@@ -212,7 +213,7 @@ void parseHeaderInfoFormat(string linestream,META_3 *&temp,int count){
     //cout << temp[count-1].id << "\t" << temp[count-1].num << "\t" << temp[count-1].type << "\t" << temp[count-1].desc << "\n";
 }
 
-void loadHeaderInfoFormat(bool flag,META_3 *&field,int count,map<string,int> &map,vector<pair<int,int> > vec, hid_t file,string gpath){
+void loadHeaderInfoFormat(bool flag,META_3 *&field,int count,map<string,int> &map, hid_t file,string gpath){
     hid_t memtype,space,dset,t1,t2,t3;
     hsize_t dim[1]={count};
     herr_t status;
@@ -244,12 +245,11 @@ void loadHeaderInfoFormat(bool flag,META_3 *&field,int count,map<string,int> &ma
     assert(status>=0);
     for(int x=0;x<count;x++){
         map.insert(pair<string,int>(string(field[x].id),x));
-        vec.push_back(pair<int,int>(checkType(field[x].type),field[x].num));
-        //cout << vec[x].first << " " << vec[x].second << "\n";
+        field[x].type[0]=checkType(field[x].type);
+        field[x].type[1]='\0';
         free(field[x].desc);
     }
     cout << "\n";
-    free(field);
 }
 
 int loadSampleNames(string linestream, hid_t file,string inipath){
@@ -488,10 +488,43 @@ void setH5CallFormat(hid_t file, hid_t &space,hid_t &dset,hid_t &cparms,hid_t &d
     
 }
 
-void parseGenotypes(string linestream,int **&call,int snpidx,int offset,vector<char> &callvec,map<string,int> states,map<string,int> formmap,vector<pair<int,int> > formvec,unsigned int formbit){
+int getBitPos(int b){
+    return log2(b&-b);
+}
+
+hid_t setType(vector<char> callvec, META_3 *format,unsigned int formbit){
+    hid_t memtype,t1;
+    t1 = H5Tcopy(H5T_C_S1);
+    H5Tset_size(t1,H5T_VARIABLE);
+    memtype = H5Tcreate(H5T_COMPOUND,sizeof(MISC));
+
+    for(int bitpos=0; formbit; formbit&=formbit-1){
+	bitpos = getBitPos(formbit&(-formbit));
+        if(format[bitpos].type[0]=='0'){ //integer
+	    //H5Tinsert(memtype,format[bitpos].id,HOFFSET(MISC,chrom),H5T_NATIVE_INT);
+    	}else if(format[bitpos].type[0]=='1'){ //float
+	    //H5Tinsert(memtype,format[bitpos].id,HOFFSET(MISC,chrom),H5T_NATIVE_FLOAT);
+    	}else if(format[bitpos].type[0]=='2'){ //flag
+	    continue;
+    	}else if(format[bitpos].type[0]=='3'){ //character
+	    //H5Tinsert(memtype,format[bitpos].id,HOFFSET(MISC,chrom),H5T_NATIVE_CHAR);
+    	}else if(format[bitpos].type[0]=='4'){ //string
+	    //H5Tinsert(memtype,format[bitpos].id,HOFFSET(MISC,chrom),t1);
+	}
+        cout << format[bitpos].id << "-";
+    } 
+     cout << "\t";
+    return memtype;
+}
+
+void parseGenotypes(string linestream,int **&call,int snpidx,int offset,vector<char> &callvec,map<string,int> states,META_3 *format,map<string,int> formmap,unsigned int formbit){
     int idx1 = offset, idx2 = offset,temp=0,counter=0; 
     int last = linestream.length(); 
     string callstr;
+    hid_t memtype;
+    
+    memtype = setType(callvec,format,formbit); //set datatype for each SNP
+
     if(callvec[0]=='X' || callvec[1]=='X' || callvec[0]=='.' || callvec[1]=='.'){ //filter indels and structural variants
  	while(idx1<last){
             idx2 = linestream.find_first_of("\t",idx1+2); 
