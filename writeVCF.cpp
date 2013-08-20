@@ -7,6 +7,8 @@
  *This version only allows SNP calls (no indels/structural variants)
 */
 
+//Update: start loading format fields
+
 #include "parsevcf.h"
 
 static const char *options="f:F:p:P:n:N:i:I:c:C:r:R:";
@@ -140,7 +142,7 @@ int main(int argc, char **argv){
 	if(fp!=NULL){
             lastidx = parseMisc(linestream,misc,infomap,formmap,contigmap,callvec,counter1,indelcount);
             counter1++;
-            parseGenotypes(linestream,call,counter2,lastidx+1,callvec,states,format,formmap,misc[counter1-1].format);
+            parseGenotypes(file,gpath2,linestream,call,i,counter2,samcount,lastidx+1,callvec,states,format,formmap,misc[counter1-1].format);
             counter2++;
         }
         if(counter1==CHUNKSIZE1 || fp==NULL){

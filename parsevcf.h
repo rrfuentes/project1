@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <iostream>
+#include <sstream>
 #include <fstream>
 #include <map>
 #include <assert.h>
@@ -492,66 +493,99 @@ int getBitPos(int b){
     return log2(b&-b);
 }
 
-hid_t setType(vector<char> callvec, META_3 *format,unsigned int formbit){
-    hid_t memtype,t1;
+int setType(vector<char> callvec, META_3 *format,unsigned int formbit,hid_t *&fieldtypes,hid_t &memtype){
+    int x,bitcount,size=0;
+    int bitpos[32];
+    hid_t t1;
     t1 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t1,H5T_VARIABLE);
-    memtype = H5Tcreate(H5T_COMPOUND,sizeof(MISC));
+    fieldtypes = (hid_t*)malloc(32*sizeof(hid_t)); //max of 32 fields
 
-    for(int bitpos=0; formbit; formbit&=formbit-1){
-	bitpos = getBitPos(formbit&(-formbit));
-        if(format[bitpos].type[0]=='0'){ //integer
-	    //H5Tinsert(memtype,format[bitpos].id,HOFFSET(MISC,chrom),H5T_NATIVE_INT);
-    	}else if(format[bitpos].type[0]=='1'){ //float
+    for(x=0; formbit; formbit&=formbit-1,x++){
+	bitpos[x] = getBitPos(formbit&(-formbit)); //get the rightmost bit
+        if(format[bitpos[x]].type[0]=='0'){ //integer
+	    //H5Tinsert(fieldtypes[x],format[bitpos].id,0,H5T_NATIVE_INT);
+            fieldtypes[x] = H5Tcopy(H5T_NATIVE_INT);
+    	}else if(format[bitpos[x]].type[0]=='1'){ //float
 	    //H5Tinsert(memtype,format[bitpos].id,HOFFSET(MISC,chrom),H5T_NATIVE_FLOAT);
-    	}else if(format[bitpos].type[0]=='2'){ //flag
+            fieldtypes[x] = H5Tcopy(H5T_NATIVE_FLOAT);
+    	}else if(format[bitpos[x]].type[0]=='2'){ //flag
 	    continue;
-    	}else if(format[bitpos].type[0]=='3'){ //character
+    	}else if(format[bitpos[x]].type[0]=='3'){ //character
 	    //H5Tinsert(memtype,format[bitpos].id,HOFFSET(MISC,chrom),H5T_NATIVE_CHAR);
-    	}else if(format[bitpos].type[0]=='4'){ //string
+            fieldtypes[x] = H5Tcopy(H5T_NATIVE_CHAR);
+    	}else if(format[bitpos[x]].type[0]=='4'){ //string
 	    //H5Tinsert(memtype,format[bitpos].id,HOFFSET(MISC,chrom),t1);
+	    fieldtypes[x] = H5Tcopy(t1);
 	}
-        cout << format[bitpos].id << "-";
+        size+=H5Tget_size(fieldtypes[x]);
+        cout << format[bitpos[x]].id << "-";
     } 
-     cout << "\t";
-    return memtype;
+    bitcount=x;
+    memtype = H5Tcreate(H5T_COMPOUND,size);
+    int offset=0;
+    for(x=0;x<bitcount;x++){
+        H5Tinsert(memtype,format[bitpos[x]].id,offset,fieldtypes[x]);
+	offset+=H5Tget_size(fieldtypes[x]);
+    }
+    cout << "size:" << size << "\t";
+    return x;
 }
 
-void parseGenotypes(string linestream,int **&call,int snpidx,int offset,vector<char> &callvec,map<string,int> states,META_3 *format,map<string,int> formmap,unsigned int formbit){
-    int idx1 = offset, idx2 = offset,temp=0,counter=0; 
+void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int genidx,int snpidx,int samcount,int offset,vector<char> &callvec,map<string,int> states,META_3 *format,map<string,int> formmap,unsigned int formbit){
+    int idx1 = offset, idx2 = offset,temp=0,counter=0,typecount=0; 
     int last = linestream.length(); 
     string callstr;
-    hid_t memtype;
-    
-    memtype = setType(callvec,format,formbit); //set datatype for each SNP
+    herr_t status;
+    hid_t memtype,space,dset,xfer_id;
+    hid_t* fieldtypes;
+    hsize_t dim[1]={samcount};
+    ostringstream num;
+    num << genidx;
+    string name = gpath + "/" + num.str();
+    space = H5Screate_simple(1,dim,NULL);
+    typecount = setType(callvec,format,formbit,fieldtypes,memtype); //set datatype for each SNP
+    dset = H5Dcreate (file,name.c_str(), memtype, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+
+    int val[samcount];
 
     if(callvec[0]=='X' || callvec[1]=='X' || callvec[0]=='.' || callvec[1]=='.'){ //filter indels and structural variants
  	while(idx1<last){
             idx2 = linestream.find_first_of("\t",idx1+2); 
 	    if(idx2==linestream.npos) idx2=last;
-	    call[snpidx][counter] = -1;
+	    call[snpidx][counter] = 25;
 	    idx1 = idx2+1;
             counter++;
         }
     }else{ //SNPs
 	while(idx1<last){
              //get Ref where 0-Ref 1..N-Alt
-	    temp=linestream[idx1]-48; //convert from char to int  
-	    callstr = callvec[temp]; //get the call
-            //get Alt 
-            idx1+=2;
-	    temp=linestream[idx1]-48; //convert from char to int  
-	    callstr += callvec[temp]; //get the call
-            call[snpidx][counter] = states.find(callstr)->second; //save the call code
+            if(linestream[idx1]=='.' || linestream[idx1+2]=='.'){
+		call[snpidx][counter] = 25;
+		idx1+=2;
+	    }else{
+		temp=linestream[idx1]-48; //convert from char to int  
+	    	callstr = callvec[temp]; //get the call
+            	//get Alt 
+            	idx1+=2;  
+	    	temp=linestream[idx1]-48; //convert from char to int  
+	    	callstr += callvec[temp]; //get the call
+             	call[snpidx][counter] = states.find(callstr)->second; //save the call code
+	    }
 	    
             idx2 = linestream.find_first_of("\t",idx1); 
 	    if(idx2==linestream.npos) idx2=last;
 	    if(idx2>idx1) idx1+=2;
             //cout << linestream.substr(idx1,idx2-idx1) << "\t";
+            int y=0;
             while(idx1<idx2){
             	//other info for each sample aside of GT
                 temp = linestream.find_first_of(":\t",idx1+1); //skip : after GT 
                 cout << linestream.substr(idx1,temp-idx1) << " ";
+                /*if(y==1){
+		    val[counter]= atoi((linestream.substr(idx1,temp-idx1)).c_str());
+		}*/
+                y++;
                 idx1=temp+1;
 	    }
             cout << "| ";
@@ -560,7 +594,15 @@ void parseGenotypes(string linestream,int **&call,int snpidx,int offset,vector<c
     	}
         cout << "\n";
     }
-    
+    xfer_id = H5Pcreate(H5P_DATASET_XFER);
+    H5Pset_preserve(xfer_id,1);
+    //status = H5Dwrite(dset, fieldtypes[1], H5S_ALL, H5S_ALL, xfer_id, val);
+    for(int x=0;x<typecount; x++){
+	H5Tclose(fieldtypes[x]);
+    }
+    status = H5Dclose(dset);
+    status = H5Sclose(space);
+    status = H5Tclose(memtype);
     callvec.clear();
 }
 
