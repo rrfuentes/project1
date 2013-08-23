@@ -1,13 +1,15 @@
 /*
- *Last Update: Aug. 16, 2013
+ *Last Update: Aug. 23, 2013
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
+ *IRRI Copyright
  *
- *Load vcf data to HDF5.
- *This version only allows SNP calls (no indels/structural variants)
+ *
+ *Descrption: Load vcf data to HDF5.
+ *This version only allows diploid SNP calls (no indels/structural variants)
 */
 
-//Update: start loading format fields
+//Update: loaded FORMAT fields; include string and field w/ Number='.'
 
 #include "parsevcf.h"
 
@@ -137,14 +139,14 @@ int main(int argc, char **argv){
     }
     setAlleleStates(states); 	
 
-    for(i=0;fp!=NULL && i<10;i++){ 
-        getline(fp,linestream);
+    for(i=0;fp!=NULL && i<100;i++){ 
+        getline(fp,linestream); 
 	if(fp!=NULL){
             lastidx = parseMisc(linestream,misc,infomap,formmap,contigmap,callvec,counter1,indelcount);
-            counter1++;
+            counter1++; 
             parseGenotypes(file,gpath2,linestream,call,i,counter2,samcount,lastidx+1,callvec,states,format,formmap,misc[counter1-1].format);
             counter2++;
-        }
+        } 
         if(counter1==CHUNKSIZE1 || fp==NULL){
             if(i+1==CHUNKSIZE1){ //first slab
                 //set compound datatype and spaces
@@ -175,7 +177,7 @@ int main(int argc, char **argv){
 	    cout << "MISC-Chunk" << (i+1)/CHUNKSIZE1 << "\n";
             counter1=0;
         }
-
+	
         if(counter2==CHUNKSIZE2_1 || fp==NULL){
             if(i+1==CHUNKSIZE2_1){ //first slab
                 //set compound datatype and spaces
@@ -201,11 +203,10 @@ int main(int argc, char **argv){
 		status = H5Dwrite(dset2,H5T_NATIVE_INT,memspace2,space2,H5P_DEFAULT,&call[0][0]); 
                 status = H5Sclose(space2); 
 	    } 
-	    cout << "Call-Chunk" << (i+1)/CHUNKSIZE2_1 << "\n";
+	    cout << "\nCall-Chunk" << (i+1)/CHUNKSIZE2_1 << "\n";
             counter2=0;
         }
-        //parseSubFields(linestream,)
-       
+        
     }
 
     cout << "Indel/Structural Variant Count:" << indelcount << "\n";
@@ -213,6 +214,7 @@ int main(int argc, char **argv){
     contigmap.clear(); 
     infomap.clear();
     formmap.clear();
+    states.clear();
     status = H5Dclose(dset1);
     status = H5Tclose(memtype1);
     status = H5Sclose(memspace1);

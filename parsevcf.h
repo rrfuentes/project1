@@ -5,6 +5,8 @@
  *
 */
 
+/*Field with Number='.' should be represented using string*/
+
 #include "hdf5.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,8 +20,8 @@
 #include <vector>
 #include <math.h>
 
-#define CHUNKSIZE1 5
-#define CHUNKSIZE2_1 5 
+#define CHUNKSIZE1 50
+#define CHUNKSIZE2_1 50 
 #define CHUNKSIZE2_2 2 
 #define SNP_CHUNK_CACHE 268435456 /*250MB*/
 #define SIZE1 20
@@ -336,6 +338,7 @@ int parseAlt(string linestream,int idx1, int idx2,MISC *&misc,int pos,vector<cha
     if(idx2-idx1>1){ //check ALT
 	if(idx2-idx1>5){
 	    strcpy(misc[pos].alt,"X"); 
+            callvec.push_back('X');
 	    return 1;
 	}else{
 	    while(temp1<idx2){
@@ -501,7 +504,7 @@ int getEntryCount(int num,int call){
     }else if(num==-2){
         num = geno[call-2]; //-1 for ref, -1 for 0-based idx
     }else if(num==-3){
-	num = 1; //unknown count
+	num = 2; //unknown count
     }//else default non-1 value
     return num;
 }
@@ -509,6 +512,7 @@ int getEntryCount(int num,int call){
 void setType(META_3 *format,unsigned int formbit,hid_t *&fieldtype,hid_t &memtype,vector<pair<int,int> > &bitpos,int call){
     int x,bitcount,size=0;
     hid_t t1;
+    hsize_t dim[1]={0};
     t1 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t1,H5T_VARIABLE);
     hid_t *temptype = (hid_t*)malloc(32*sizeof(hid_t));
@@ -517,7 +521,7 @@ void setType(META_3 *format,unsigned int formbit,hid_t *&fieldtype,hid_t &memtyp
     for(x=0; formbit; formbit&=formbit-1,x++){
 	bitpos.push_back(make_pair(getBitPos(formbit&(-formbit)),0)); //get the rightmost bit
 	bitpos[x].second = getEntryCount(format[bitpos[x].first].num,call); //save the entry count
-	if(bitpos[x].second){
+	if(bitpos[x].second==1){
 	    if(format[bitpos[x].first].type[0]=='0'){ //integer
             	temptype[x] = H5Tcopy(H5T_NATIVE_INT);
     	    }else if(format[bitpos[x].first].type[0]=='1'){ //float
@@ -530,7 +534,7 @@ void setType(META_3 *format,unsigned int formbit,hid_t *&fieldtype,hid_t &memtyp
 	    	temptype[x] = H5Tcopy(t1);
 	    }
 	}else{
-	    hsize_t dim[1]={bitpos[x].second};
+	    dim[0]=bitpos[x].second;
             if(format[bitpos[x].first].type[0]=='0'){ //integer
             	temptype[x] = H5Tarray_create(H5T_NATIVE_INT,1,dim);
     	    }else if(format[bitpos[x].first].type[0]=='1'){ //float
@@ -544,60 +548,139 @@ void setType(META_3 *format,unsigned int formbit,hid_t *&fieldtype,hid_t &memtyp
 	    }
         }
         size+=H5Tget_size(temptype[x]);
-        cout << format[bitpos[x].first].id << "-";
+        //cout << format[bitpos[x].first].id << "-";
     } 
 
     bitcount=x;
     memtype = H5Tcreate(H5T_COMPOUND,size);
-    int offset=0; cout << "here";
+    int offset=0; 
     for(x=0;x<bitcount;x++){
         H5Tinsert(memtype,format[bitpos[x].first].id,offset,temptype[x]); //for whole compound type
 	offset+=H5Tget_size(temptype[x]);
-        fieldtype[x] = H5Tcreate(H5T_COMPOUND,sizeof(temptype[x])); //single field for write-by-field
+        fieldtype[x] = H5Tcreate(H5T_COMPOUND,H5Tget_size(temptype[x])); //single field for write-by-field
         H5Tinsert(fieldtype[x],format[bitpos[x].first].id,0,temptype[x]); //insert field with same name
         H5Tclose(temptype[x]);
-    }
+    } 
 }
 
-int allocVar(vector<vector<string> > token,int idx,int **&intvar,int num,int samcount){
-    int count = 0;   
-    int geno[4] = {3,6,10,15}; //possible number of genotypes for calls w/ 1,2,3,4 Alts resp.
+void allocVar(vector<vector<string> > token,int idx,int **&intvar,int num,int samcount){  
+    string temp;
     if(num==1){
     	intvar = (int**)malloc(sizeof(int*));
 	intvar[0] = (int*)malloc(samcount*sizeof(int));
+        if(intvar[0]==NULL) cout << "Insufficient Memory";
         for(int x=0;x<samcount;x++){
-	    intvar[0][x] = (token[x].size())?atoi(token[x][idx].c_str()):0;
-	    cout << intvar[0][x] << "+";
+            if(token[x].size()){
+	    	intvar[0][x] = (strcmp(token[x][idx].c_str(),"."))?atoi(token[x][idx].c_str()):-1;
+            }else{
+	        intvar[0][x] = -2;
+	    }
 	}
-        return 1; //return num of values in the field
     }else{
 	intvar = (int**)malloc(samcount*sizeof(int*));
-        intvar[0] = (int*)malloc(samcount*count*sizeof(int));
+        intvar[0] = (int*)malloc(samcount*num*sizeof(int));
+        if(intvar[0]==NULL) cout << "Insufficient Memory";
 	for(int x=0;x<samcount;x++){
-	    intvar[x] = intvar[0]+x*count;
+	    intvar[x] = intvar[0]+x*num;
 	    int off1=0,off2=0;
-	    for(int y=0;y<count;y++){ 
+	    for(int y=0;y<num;y++){ 
 	        if(token[x].size()){ 
                     off2 = (token[x][idx]).find_first_of(",",off1);
-		    intvar[x][y] = atoi((token[x][idx].substr(off1,off2-off1)).c_str());
-                    cout << intvar[x][y] <<"*";
+		    temp = token[x][idx].substr(off1,off2-off1);
+		    intvar[x][y] = (strcmp(temp.c_str(),"."))?atoi((temp).c_str()):-1;
 		    off1=off2+1;
 		}else{
-		    intvar[x][y] = 0;
+		    intvar[x][y] = -2;
 		}
 	    }
 	}
-	return count;
-    }
+    } 
 }
 
-void loadFormatFields(hid_t dset,hid_t fieldtype,int **intvar,int call,int samcount,int retcount){
+void allocVar(vector<vector<string> > token,int idx,char **&charvar,int num,int samcount){  
+    char temp[10];
+    if(num==1){
+    	charvar = (char**)malloc(sizeof(char*));
+	charvar[0] = (char*)malloc(samcount*sizeof(char));
+        if(charvar[0]==NULL) cout << "Insufficient Memory";
+        for(int x=0;x<samcount;x++){
+            if(token[x].size()){
+		strcpy(temp,token[x][idx].c_str());
+	    	charvar[0][x] = (strlen(temp)==1)?temp[0]:'.';
+            }else{
+	        charvar[0][x] = '.';
+	    }
+	}
+    }else{
+	charvar = (char**)malloc(samcount*sizeof(char*));
+        charvar[0] = (char*)malloc(samcount*num*sizeof(char));
+        if(charvar[0]==NULL) cout << "Insufficient Memory";
+	for(int x=0;x<samcount;x++){
+	    charvar[x] = charvar[0]+x*num;
+	    int off1=0,off2=0;
+	    for(int y=0;y<num;y++){ 
+	        if(token[x].size()){ 
+                    off2 = (token[x][idx]).find_first_of(",",off1);
+		    strcpy(temp, (token[x][idx].substr(off1,off2-off1)).c_str());
+		    charvar[x][y] = (strlen(temp)==1)?temp[0]:'.';
+		    off1=off2+1;
+		}else{
+		    charvar[x][y] = '.';
+		}
+	    }
+	}
+    } 
+}
+
+void allocVar(vector<vector<string> > token,int idx,float **&floatvar,int num,int samcount){  
+    string temp;
+    if(num==1){
+    	floatvar = (float**)malloc(sizeof(float*));
+	floatvar[0] = (float*)malloc(samcount*sizeof(float));
+        if(floatvar[0]==NULL) cout << "Insufficient Memory";
+        for(int x=0;x<samcount;x++){
+            if(token[x].size()){
+	    	floatvar[0][x] = (strcmp(token[x][idx].c_str(),"."))?atof(token[x][idx].c_str()):-1;
+            }else{
+	        floatvar[0][x] = -2;
+	    }
+	}
+    }else{
+	floatvar = (float**)malloc(samcount*sizeof(float*));
+        floatvar[0] = (float*)malloc(samcount*num*sizeof(float));
+        if(floatvar[0]==NULL) cout << "Insufficient Memory";
+	for(int x=0;x<samcount;x++){
+	    floatvar[x] = floatvar[0]+x*num;
+	    int off1=0,off2=0;
+	    for(int y=0;y<num;y++){ 
+	        if(token[x].size()){ 
+                    off2 = (token[x][idx]).find_first_of(",",off1);
+		    temp = token[x][idx].substr(off1,off2-off1);
+		    floatvar[x][y] = (strcmp(temp.c_str(),"."))?atof((temp).c_str()):-1;
+		    off1=off2+1;
+		}else{
+		    floatvar[x][y] = -2;
+		}
+	    }
+	}
+    } 
+}
+
+template <class vartype>
+void loadFormatFields(hid_t dset,hid_t fieldtype,vartype **&var,int call,int samcount){
     herr_t status;
     if(call==1){
-    	status = H5Dwrite(dset, fieldtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, intvar[0]);
+    	status = H5Dwrite(dset, fieldtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, var[0]);
+	assert(status >=0);
+	free(var[0]);
+	free(var);
     }else{
-	status = H5Dwrite(dset, fieldtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, &intvar[0]);
+	status = H5Dwrite(dset, fieldtype, H5S_ALL, H5S_ALL, H5P_DEFAULT, &var[0][0]);
+        assert(status >=0);
+        free(var[0]); //frees all
+	free(var);
     }
+    
     assert(status >=0);
 }
 
@@ -605,9 +688,9 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
     int idx1 = offset, idx2 = offset,temp=0,counter=0; 
     int last = linestream.length(); 
     //variables to contain parsed fields(single/multi-value)
-    int **intvar; //3D to accomodate fields using same datatype
-    float **floatvar;
-    char **charvar;
+    int **intvar=NULL; //3D to accomodate fields using same datatype
+    float **floatvar=NULL;
+    char **charvar=NULL;
     vector<vector<string> > stringvar;
     vector<pair<int,int> > bitpos;
     vector<vector<string> > token;
@@ -620,7 +703,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
     num << genidx;
     string name = gpath + "/" + num.str();
     space = H5Screate_simple(1,dim,NULL);
-
+    
     if(callvec[0]=='X' || callvec[1]=='X' || callvec[0]=='.' || callvec[1]=='.'){ //filter indels, structural variants,'.' calls
  	while(idx1<last){
             idx2 = linestream.find_first_of("\t",idx1+2); 
@@ -630,7 +713,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
             counter++;
         }
     }else{ //SNPs
-	while(idx1<last){
+	while(idx1<last){ 
              //get Ref where 0-Ref 1..N-Alt
             if(linestream[idx1]=='.' || linestream[idx1+2]=='.'){
 		call[snpidx][counter] = 25;
@@ -654,41 +737,51 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
             while(idx1<idx2){
             	//other info for each sample aside of GT
                 temp = linestream.find_first_of(":\t",idx1+1); //skip : after GT 
+		if(temp==linestream.npos) temp = last;
                 token[counter].push_back(linestream.substr(idx1,temp-idx1));
                 //cout << token[counter][token[counter].size()-1] << "-";
                 idx1=temp+1;
 	    }
 	    //cout << "|";
             idx1 = idx2+1;
-            counter++;
+            counter++; 
     	}
-        cout <<"\n";
-    }
-
-    //set datatype for each SNP
-    setType(format,formbit,fieldtype,memtype,bitpos,callvec.size()); 
-    //create dataset
-    dset = H5Dcreate (file,name.c_str(), memtype, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+       
+        
+	//set datatype for each SNP
+    	setType(format,formbit,fieldtype,memtype,bitpos,callvec.size());  cout << "here";
+    	//create dataset
+    	dset = H5Dcreate (file,name.c_str(), memtype, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     
-    int typecount = bitpos.size();
-    int retcount=0;
-    
-    for(int x=0;x<typecount; x++){
-	if(format[bitpos[x].first].type[0]=='0'){ //integer
-	    retcount = allocVar(token,x,intvar,bitpos[x].second,samcount);  
-	    loadFormatFields(dset,fieldtype[x],intvar,bitpos[x].second,samcount,retcount);
-    	}else if(format[bitpos[x].first].type[0]=='1'){ //float
-	    	    
-    	}else if(format[bitpos[x].first].type[0]=='2'){ //flag
-	    	    
-    	}else if(format[bitpos[x].first].type[0]=='3'){ //character
-	    	    
-    	}else if(format[bitpos[x].first].type[0]=='4'){ //string
-	    	   
-	}
-	H5Tclose(fieldtype[x]);
+    	int typecount = bitpos.size();
+        
+    	for(int x=0;x<typecount; x++){
+	    if(format[bitpos[x].first].type[0]=='0'){ //integer
+	    	allocVar(token,x,intvar,bitpos[x].second,samcount);  
+	    	loadFormatFields<int>(dset,fieldtype[x],intvar,bitpos[x].second,samcount);
+    	    }else if(format[bitpos[x].first].type[0]=='1'){ //float
+	    	allocVar(token,x,floatvar,bitpos[x].second,samcount);  
+	    	loadFormatFields<float>(dset,fieldtype[x],floatvar,bitpos[x].second,samcount);  
+    	    }else if(format[bitpos[x].first].type[0]=='2'){ //flag
+	    	continue;
+    	    }else if(format[bitpos[x].first].type[0]=='3'){ //character
+	    	allocVar(token,x,charvar,bitpos[x].second,samcount);  
+	    	loadFormatFields<char>(dset,fieldtype[x],charvar,bitpos[x].second,samcount);    
+    	    }else if(format[bitpos[x].first].type[0]=='4'){ //string
+	     	continue;
+	    }
+	    H5Tclose(fieldtype[x]);
+    	}	
+    	//free
+    	for(int x=0;x<samcount;x++)
+	    token[x].clear();
+    	token.clear();
+    	bitpos.clear();
+        free(fieldtype);
+        status = H5Dclose(dset);
+	assert(status >=0);
     }
-    status = H5Dclose(dset);
+    
     status = H5Sclose(space);
     status = H5Tclose(memtype);
     callvec.clear();
