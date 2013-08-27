@@ -139,7 +139,7 @@ int main(int argc, char **argv){
     }
     setAlleleStates(states); 	
 
-    for(i=0;fp!=NULL && i<100;i++){ 
+    for(i=0;fp!=NULL;i++){ 
         getline(fp,linestream); 
 	if(fp!=NULL){
             lastidx = parseMisc(linestream,misc,infomap,formmap,contigmap,callvec,counter1,indelcount);
@@ -154,7 +154,7 @@ int main(int argc, char **argv){
                 memspace1 = H5Dget_space(dset1);
                 //write first slab
             	status = H5Dwrite(dset1, memtype1, H5S_ALL, H5S_ALL, H5P_DEFAULT, misc); 
-		clearMisc(misc,counter1); 
+		//clearMisc(misc,counter1); 
 	    }else{ 
 		offset1[0]=newsize1[0];
           	//extend data later for the 2nd to the last slab
@@ -171,7 +171,7 @@ int main(int argc, char **argv){
                 status = H5Sselect_hyperslab(space1, H5S_SELECT_SET,
  			(const hsize_t*)offset1,NULL, count1, NULL);
 		status = H5Dwrite(dset1,memtype1,memspace1,space1,H5P_DEFAULT,misc);
-                clearMisc(misc,counter1);  
+                //clearMisc(misc,counter1);  
                 status = H5Sclose(space1); 
 	    } 
 	    cout << "MISC-Chunk" << (i+1)/CHUNKSIZE1 << "\n";

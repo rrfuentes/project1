@@ -20,15 +20,17 @@
 #include <vector>
 #include <math.h>
 
-#define CHUNKSIZE1 50
-#define CHUNKSIZE2_1 50 
+#define CHUNKSIZE1 50000
+#define CHUNKSIZE2_1 100000 
 #define CHUNKSIZE2_2 2 
-#define SNP_CHUNK_CACHE 268435456 /*250MB*/
+#define SNP_CHUNK_CACHE 1048576000//268435456 /*250MB*/
 #define SIZE1 20
 #define SIZE2 20
 #define SIZE3 20
 #define SIZE4 20
 #define SIZE5 15
+#define SIZE6 10
+#define SIZE7 100
 
 using namespace std;
 
@@ -59,9 +61,9 @@ typedef struct{
     char ref; 
     char alt[6];
     int qual;
-    char* filter;
+    char filter[SIZE6];
     unsigned int info;
-    char* infoval; /*semi-colon-separated values, ID in another table*/
+    char infoval[SIZE7]; /*semi-colon-separated values, ID in another table*/
     unsigned int format; 
 }MISC;
 
@@ -314,7 +316,6 @@ void parseInfo(string &linestream,int idx1, int idx2, MISC*& misc, int pos, map<
     }
     
     misc[pos].info = flag;
-    misc[pos].infoval = (char*)malloc((values.length()+1)*sizeof(char));
     strcpy(misc[pos].infoval,values.c_str());
 }
 
@@ -401,7 +402,6 @@ int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string
     //FILTER
     idx2 = linestream.find_first_of("\t",idx1+1); 
     temp = linestream.substr(idx1,idx2-idx1);
-    misc[snpidx].filter = (char*)malloc((temp.length()+1)*sizeof(char));
     strcpy(misc[snpidx].filter,temp.c_str()); 
     idx1=idx2+1;
     //INFO
@@ -417,16 +417,9 @@ int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string
     return idx2;
 }
 
-void clearMisc(MISC *&misc,int count){
-    for(int x=0;x<count;x++){
-	free(misc[x].filter);
-        free(misc[x].infoval);
-    }
-}
-
 
 void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &cparms,hid_t &dataprop,int chunk,string inipath){
-    hid_t t1,t2,t3;
+    hid_t t1,t2,t3,t4;
     herr_t status;
     hsize_t dim[1]={chunk};
     hsize_t maxdim[1] = {H5S_UNLIMITED};
@@ -437,6 +430,7 @@ void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &c
     space = H5Screate_simple(1,dim,maxdim); //create data space
     cparms = H5Pcreate(H5P_DATASET_CREATE); //create chunk 
     status = H5Pset_chunk(cparms,1,chkdim);
+    status = H5Pset_deflate(cparms,8); //compression
 
     //Compound MISC datatype
     t1 = H5Tcopy(H5T_C_S1);
@@ -444,7 +438,9 @@ void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &c
     t2 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t2,5);
     t3 = H5Tcopy(H5T_C_S1);
-    H5Tset_size(t3,H5T_VARIABLE);
+    H5Tset_size(t3,SIZE6);
+    t4 = H5Tcopy(H5T_C_S1);
+    H5Tset_size(t4,SIZE7);
     memtype = H5Tcreate(H5T_COMPOUND,sizeof(MISC));
     H5Tinsert(memtype,"chrom",HOFFSET(MISC,chrom),H5T_NATIVE_INT);
     H5Tinsert(memtype,"pos",HOFFSET(MISC,pos),H5T_NATIVE_INT);
@@ -454,7 +450,7 @@ void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &c
     H5Tinsert(memtype,"qual",HOFFSET(MISC,qual),H5T_NATIVE_INT);
     H5Tinsert(memtype,"filter",HOFFSET(MISC,filter),t3);
     H5Tinsert(memtype,"infobit",HOFFSET(MISC,info),H5T_NATIVE_UINT);
-    H5Tinsert(memtype,"infoval",HOFFSET(MISC,infoval),t3);
+    H5Tinsert(memtype,"infoval",HOFFSET(MISC,infoval),t4);
     H5Tinsert(memtype,"formatbit",HOFFSET(MISC,format),H5T_NATIVE_UINT);
 
     //create dataset access property list for MISC dataset
@@ -468,6 +464,7 @@ void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &c
     status = H5Tclose(t1);
     status = H5Tclose(t2);
     status = H5Tclose(t3);
+    status = H5Tclose(t4);
     assert(status>=0);
 }
 
@@ -481,8 +478,8 @@ void setH5CallFormat(hid_t file, hid_t &space,hid_t &dset,hid_t &cparms,hid_t &d
     string name = inipath + "/call";
     space = H5Screate_simple(2,dim,maxdim); //create data space
     cparms = H5Pcreate(H5P_DATASET_CREATE); //create chunk 
-    status = H5Pset_szip(cparms,H5_SZIP_NN_OPTION_MASK,8); //compression
     status = H5Pset_chunk(cparms,2,chkdim);
+    status = H5Pset_deflate(cparms,8); //compression
     
     //create dataset access property list for MISC dataset
     dataprop = H5Pcreate(H5P_DATASET_ACCESS);
@@ -561,6 +558,7 @@ void setType(META_3 *format,unsigned int formbit,hid_t *&fieldtype,hid_t &memtyp
         H5Tinsert(fieldtype[x],format[bitpos[x].first].id,0,temptype[x]); //insert field with same name
         H5Tclose(temptype[x]);
     } 
+    free(temptype);
 }
 
 void allocVar(vector<vector<string> > token,int idx,int **&intvar,int num,int samcount){  
@@ -696,7 +694,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
     vector<vector<string> > token;
     string callstr;
     herr_t status;
-    hid_t memtype,space,dset,xfer_id;
+    hid_t memtype,space,dset;
     hid_t* fieldtype;
     hsize_t dim[1]={samcount};
     ostringstream num;
@@ -749,7 +747,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
        
         
 	//set datatype for each SNP
-    	setType(format,formbit,fieldtype,memtype,bitpos,callvec.size());  cout << "here";
+    	setType(format,formbit,fieldtype,memtype,bitpos,callvec.size());  
     	//create dataset
     	dset = H5Dcreate (file,name.c_str(), memtype, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     
@@ -779,11 +777,10 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
     	bitpos.clear();
         free(fieldtype);
         status = H5Dclose(dset);
+        status = H5Tclose(memtype);
 	assert(status >=0);
     }
-    
     status = H5Sclose(space);
-    status = H5Tclose(memtype);
     callvec.clear();
 }
 
