@@ -21,7 +21,7 @@
 #include <math.h>
 
 #define CHUNKSIZE1 50000
-#define CHUNKSIZE2_1 100000 
+#define CHUNKSIZE2_1 100000
 #define CHUNKSIZE2_2 2 
 #define SNP_CHUNK_CACHE 1048576000//268435456 /*250MB*/
 #define SIZE1 20
@@ -101,7 +101,7 @@ void parseHeader1(string linestream, map<string,string> &headmap){
 	ret = headmap.find(key);
         first=linestream.find_first_of("=")+1; /*field w/o <...>*/
 	if(ret==headmap.end()){
-	    headmap.insert(pair<string,string>(key,linestream.substr(first,len-first))); 
+	    headmap.insert(pair<string,string>(key,linestream.substr(first,len-first)));
 	}else{
 	    headmap[key].append(linestream.substr(first,len-first));
 	}
@@ -117,12 +117,12 @@ void loadHeader1(map<string,string> &headmap,hid_t file,string gpath){
     hsize_t dim[1]={count};
     herr_t status;
     string name = gpath + "/meta"; 
-    for (map<string,string>::iterator it=headmap.begin(); it!=headmap.end();++it){
+    map<string,string>::const_iterator it;
+    for(it=headmap.begin(); it!=headmap.end();++it){
 	strcpy(header[x].field, it->first.c_str());
-	header[x].value = (char*)malloc(it->second.length()*sizeof(char));
-        strcpy(header[x].value, it->second.c_str()); 
+	header[x].value = (char*)malloc((it->second.length()+1)*sizeof(char));
+        strcpy(header[x].value, it->second.c_str());
         //cout << header[x].field << " ==> " << header[x].value << "\n\n\n";
-        headmap.erase(it);
         x++;
     }
     /*Load to HDF5*/
@@ -147,6 +147,7 @@ void loadHeader1(map<string,string> &headmap,hid_t file,string gpath){
     for(int x=0;x<count;x++){
 	free(header[x].value);
     }
+    headmap.clear();
 }
 
 void loadHeader2(META_2 *&contig,hid_t file,int count,map<string,int> &contigmap,string gpath){
@@ -213,7 +214,7 @@ void parseHeaderInfoFormat(string linestream,META_3 *&temp,int count){
     //Description
     idx1 = linestream.find_first_of("=",idx2)+2;
     idx2 = linestream.length()-2;
-    temp[count-1].desc = (char*)malloc((idx2-idx1+1)*sizeof(char));
+    temp[count-1].desc = (char*)malloc((idx2-idx1+2)*sizeof(char));
     strcpy(temp[count-1].desc,(linestream.substr(idx1,idx2-idx1)).c_str());
     //cout << temp[count-1].id << "\t" << temp[count-1].num << "\t" << temp[count-1].type << "\t" << temp[count-1].desc << "\n";
 }
@@ -251,7 +252,7 @@ void loadHeaderInfoFormat(bool flag,META_3 *&field,int count,map<string,int> &ma
     for(int x=0;x<count;x++){
         map.insert(pair<string,int>(string(field[x].id),x));
         field[x].type[0]=checkType(field[x].type);
-        field[x].type[1]='\0';
+        //field[x].type[1]='\0';
         free(field[x].desc);
     }
     cout << "\n";
@@ -265,7 +266,7 @@ int loadSampleNames(string linestream, hid_t file,string inipath){
     } 
     for(x=0;idx1<linestream.npos;x++){ 
 	samples = (char**)realloc(samples,(x+1)*sizeof(char*));
-        samples[x] = new char[SIZE3];
+        samples[x] = (char*)malloc(SIZE3*sizeof(char));
         idx2 = linestream.find_first_of("\t",idx1+1); 
         if(idx2==linestream.npos){
 	    strcpy(samples[x],(linestream.substr(idx1+1,linestream.length()-idx1)).c_str());

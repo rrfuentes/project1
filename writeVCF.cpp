@@ -170,8 +170,7 @@ int main(int argc, char **argv){
 	 	space1 = H5Dget_space(dset1);
                 status = H5Sselect_hyperslab(space1, H5S_SELECT_SET,
  			(const hsize_t*)offset1,NULL, count1, NULL);
-		status = H5Dwrite(dset1,memtype1,memspace1,space1,H5P_DEFAULT,misc);
-                //clearMisc(misc,counter1);  
+		status = H5Dwrite(dset1,memtype1,memspace1,space1,H5P_DEFAULT,misc); 
                 status = H5Sclose(space1); 
 	    } 
 	    cout << "MISC-Chunk" << (i+1)/CHUNKSIZE1 << "\n";
