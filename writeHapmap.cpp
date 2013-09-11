@@ -1,9 +1,10 @@
 /*
- *Last update: June 26, 2013
+ *Last update: July 19, 2013
  *Author: Roven Rommel B. Fuentes
  *TT-Change Genetic Resources Center, International Rice Research Institute
  *
  * Load hapmap data to HDF5.
+ *load sample names
  */
 
 #include "hdf5.h"
@@ -16,11 +17,11 @@
 #include <assert.h>
 #include <sys/resource.h>
 
-#define CHOP1 7 //500 //10
-#define CHOP2 7 //500 //10
-#define CHOP3 14 //2 //3
+#define CHUNKSIZE1 300 //500 //10
+#define CHUNKSIZE2_1 1200 //500 //10
+#define CHUNKSIZE2_2 100 //2 //3
 #define FIXCOL 11
-#define SNP_CHUNK_CACHE 536870912 /*536870912 /*500MB*/
+#define SNP_CHUNK_CACHE 1048576000 /*536870912 /*500MB*/
 #define size1 15
 #define size2 3
 #define size3 5
@@ -34,7 +35,7 @@
 
 using namespace std;
 
-static const char *options="f:F:p:P:n:N:i:I:d:D:s:S:";
+static const char *options="f:F:p:P:n:N:i:I:c:C:r:R:";
 
 static char *fileModel = 0;
 static string datafile;
@@ -74,10 +75,10 @@ void parseArgs(int argc, char **argv) {
         case 'P': varPath = optarg; break; //variable path string in the file
         case 'n':
         case 'N': varName = optarg; break; //variable name string in the file
-	case 's':
-	case 'S': snp = atoi(optarg); break; //number of genotype columns 
-        case 'd':
-	case 'D': LENGTH = atoi(optarg); break; //number of samples 
+	case 'r':
+	case 'R': snp = atoi(optarg); break; //number of genotype columns 
+        case 'c':
+	case 'C': LENGTH = atoi(optarg); break; //number of samples 
 	default: break;
         } // switch
     } // while
@@ -93,12 +94,12 @@ int main(int argc, char **argv){
     if (datafile.empty() || inputfile.empty() || varName.empty()
 	|| varPath.empty()  || LENGTH==0 || snp==0) {
         cerr << "Usage:\n" << *argv
-                  << " -f data-file-name"
-		  << " -i input-data-file-name"
-		  << " -n variable-name"
-                  << " -p variable-path"
-		  << " -s number of SNPs "
-                  << " -d number of samples"
+                  << " -f data-file-name\n"
+		  << " -i input-data-file-name\n"
+		  << " -n variable-name\n"
+                  << " -p variable-path\n"
+		  << " -r number of SNPs\n"
+                  << " -c number of samples\n"
                   << endl;
         return -1;
     }
@@ -139,8 +140,7 @@ int main(int argc, char **argv){
     Calls["NN"]=24;
   
     char *tok=NULL;
-    int total=0, temp=0,CHUNKSIZE1=LENGTH/CHOP1, CHUNKSIZE2 = LENGTH/CHOP2;
-    int REM1=LENGTH%CHOP1,REM2=LENGTH%CHOP2;
+    int total=0, temp=0;
     string miscvar, snpvar, headervar;
     string linestream;
     hid_t file, memtype1, memtype2, memspace1,memspace2, space1, space2, dset1, dset2, dataprop; /*handles*/
@@ -148,19 +148,19 @@ int main(int argc, char **argv){
     hid_t cparms1,cparms2;
     herr_t status;
     hsize_t dim1[1]={CHUNKSIZE1}; /*dataspace dimension for misc data*/
-    hsize_t dim2[2]={CHUNKSIZE2,snp}; /*dataspace dimension for genotype data*/
+    hsize_t dim2[2]={CHUNKSIZE2_1,LENGTH}; /*dataspace dimension for genotype data*/
     hsize_t maxdim1[1]={H5S_UNLIMITED};
-    hsize_t maxdim2[2]={H5S_UNLIMITED,snp};
+    hsize_t maxdim2[2]={H5S_UNLIMITED,LENGTH};
     hsize_t chkdim1[1]={CHUNKSIZE1}; /*misc chunk size*/
-    hsize_t chkdim2[2]={CHUNKSIZE2,snp/CHOP3}; /*genotype chunk size*/
+    hsize_t chkdim2[2]={CHUNKSIZE2_1,CHUNKSIZE2_2}; /*genotype chunk size*/
     hssize_t offset1[1]={0}; /*offset for slabs*/
     hssize_t offset2[2]={0,0};
     hsize_t newsize1[1]={CHUNKSIZE1}; /*iterate offset for slabs*/
-    hsize_t newsize2[2]={CHUNKSIZE2,snp};
+    hsize_t newsize2[2]={CHUNKSIZE2_1,LENGTH};
     hsize_t count1[1]={CHUNKSIZE1}; /*param fo hyperslab*/
-    hsize_t count2[2]={CHUNKSIZE2,snp};
+    hsize_t count2[2]={CHUNKSIZE2_1,LENGTH};
     
-    if(CHUNKSIZE1<=1 && CHUNKSIZE2<=1){
+    if(CHUNKSIZE1<=1 && CHUNKSIZE2_1<=1){
 	cout << "ERROR: Invalid chunk size." << endl;
 	cout << "REPORT: Failed to complete writing the data" << endl;
 	return -1;
@@ -258,68 +258,70 @@ int main(int argc, char **argv){
     }*/
      
     column_t wdata[CHUNKSIZE1]; /*Write buffer*/
-    int snpdata[CHUNKSIZE2][snp];
+    int snpdata[CHUNKSIZE2_1][LENGTH];
     printf("sizeof 1 misc data row: %lu ; total: %lu\n",sizeof(wdata)/CHUNKSIZE1, sizeof(wdata)); 
-    printf("sizeof 1 genotype data row: %lu; total: %lu\n",sizeof(snpdata)/CHUNKSIZE2, sizeof(snpdata)); 
+    printf("sizeof 1 genotype data row: %lu; total: %lu\n",sizeof(snpdata)/CHUNKSIZE2_1, sizeof(snpdata)); 
     printf("linestream size:%lu\n",linestream.capacity());
 
     /*subetting data thru slab to avoid overloading memory */
-    for(int i=0,counter1=0,counter2=0;i<LENGTH && getline(fp,linestream);i++,counter1++,counter2++){ 
-        tok=NULL;
-	tok=strtok(const_cast<char*>(linestream.c_str()),"\t\n");
-        /*Load miscellaneous data*/
-        for (uint64_t j=0; j<FIXCOL; j++) {  
-	    if (tok==NULL){
-		cout << "ERROR: Incomplete entries on miscellaneous data of sample " << i << endl;
-		cout << "REPORT: Failed to complete writing the data" << endl;
-		return -1;
-	    }else{
-           	switch(j){
-		    case 0: strcpy(wdata[counter1].rs,tok); break;
-		    case 1: strcpy(wdata[counter1].snpallele,tok); break; 
-		    case 2: strcpy(wdata[counter1].chrom,tok); break;
-  		    case 3: wdata[counter1].pos=atoi(tok); break;
-                    case 4: wdata[counter1].strand=tok[0]; break;
-		    case 5: strcpy(wdata[counter1].build,tok); break;
-		    case 6: strcpy(wdata[counter1].center,tok); break;
-		    case 7: strcpy(wdata[counter1].prot,tok); break;
-		    case 8: strcpy(wdata[counter1].assay,tok); break;
-		    case 9: strcpy(wdata[counter1].panel,tok); break;
-		    case 10: strcpy(wdata[counter1].cq,tok); break;
-		    default: break;
-	   	} /*end switch*/
-           	tok=strtok(NULL,"\t\n");
-            }
-	}
-        /*Load genotype data*/
-        for (uint64_t j=0; j<snp; j++) {  
-	    /*write snps*/
-            if(tok==NULL){
-		cout << "ERROR: Incomplete entries on genotype data of sample " << i << endl;
-		cout << "REPORT: Failed to complete writing the data" << endl;
-		return -1;
-	    }else{
-	    	snpdata[counter2][j]=Calls[tok];
-	    	//cout << snpdata[counter2][j] << " ";
-            	tok=strtok(NULL,"\t\n");
+    for(int i=0,counter1=0,counter2=0;fp!=NULL;i++){ 
+	getline(fp,linestream);
+	if(fp!=NULL){
+            tok=NULL;
+	    tok=strtok(const_cast<char*>(linestream.c_str()),"\t\n");
+            /*Load miscellaneous data*/
+            for (uint64_t j=0; j<FIXCOL; j++) {  
+	    	if (tok==NULL){
+		    cout << "ERROR: Incomplete entries on miscellaneous data of sample " << i << endl;
+		    cout << "REPORT: Failed to complete writing the data" << endl;
+			return -1;
+	    	}else{
+           	    switch(j){
+		     	case 0: strcpy(wdata[counter1].rs,tok); break;
+		    	case 1: strcpy(wdata[counter1].snpallele,tok); break; 
+		    	case 2: strcpy(wdata[counter1].chrom,tok); break;
+  		    	case 3: wdata[counter1].pos=atoi(tok); break;
+                    	case 4: wdata[counter1].strand=tok[0]; break;
+		    	case 5: strcpy(wdata[counter1].build,tok); break;
+		    	case 6: strcpy(wdata[counter1].center,tok); break;
+		    	case 7: strcpy(wdata[counter1].prot,tok); break;
+		    	case 8: strcpy(wdata[counter1].assay,tok); break;
+		    	case 9: strcpy(wdata[counter1].panel,tok); break;
+		    	case 10: strcpy(wdata[counter1].cq,tok); break;
+		    	default: break;
+	   	    } /*end switch*/
+           	    tok=strtok(NULL,"\t\n");
+            	}
 	    }
+            /*Load genotype data*/
+            for (uint64_t j=0; j<LENGTH; j++) {  
+	        /*write snps*/
+            	if(tok==NULL){
+		    cout << "ERROR: Incomplete entries on genotype data of sample " << i << endl;
+		    cout << "REPORT: Failed to complete writing the data" << endl;
+		    return -1;
+	    	}else{
+	    	    snpdata[counter2][j]=Calls[tok];
+	    	    //cout << snpdata[counter2][j] << " ";
+            	    tok=strtok(NULL,"\t\n");
+	    	}
+	    }
+	    counter1++; counter2++;
 	}
-
-        //cout << wdata[counter1].pos << "\n";
-	/*WRITING MISC DATA*/
-        if(counter1+1==CHUNKSIZE1 || i+1==LENGTH){ /*saving of slab*/
+        /*WRITING MISC DATA*/
+        if(counter1==CHUNKSIZE1 || fp==NULL){ /*saving of slab*/
             if(i+1==CHUNKSIZE1){ /*first slab*/
 		 status = H5Dwrite(dset1, memtype1, H5S_ALL, H5S_ALL, H5P_DEFAULT, wdata);
             }else{
 		offset1[0]=newsize1[0];
 		/*extend data later for the 2nd to the last slab*/
-                if(i+1==LENGTH && REM1!=0){
- 		     count1[0] = REM1;
-		     newsize1[0]=newsize1[0]+REM1;
-		     dim1[0]=REM1;
+                if(fp==NULL && counter1>0){
+ 		     count1[0] = counter1;
+		     newsize1[0]=newsize1[0]+counter1;
+		     dim1[0]=counter1;
     		     memspace1 = H5Screate_simple(1,dim1,maxdim1); 
 		}else{
-		     newsize1[0]=newsize1[0]+CHUNKSIZE1;
+		     newsize1[0]=newsize1[0]+counter1;
 		}
            	status = H5Dset_extent(dset1,newsize1);
 	 	space1 = H5Dget_space(dset1);
@@ -328,22 +330,22 @@ int main(int argc, char **argv){
 		status = H5Dwrite(dset1,memtype1,memspace1,space1,H5P_DEFAULT,wdata);
                 status = H5Sclose(space1);
             }
- 	    counter1=-1; /*increment by 1 before next iteration*/
+ 	    counter1=0; /*increment by 1 before next iteration*/
         }
 	/*WRITING GENOTYPE DATA*/
-        if(counter2+1==CHUNKSIZE2 || i+1==LENGTH){
-	    if(i+1==CHUNKSIZE2){ /*first slab*/
+        if(counter2==CHUNKSIZE2_1 || fp==NULL){
+	    if(i+1==CHUNKSIZE2_1){ /*first slab*/
 		status = H5Dwrite(dset2,H5T_NATIVE_INT,H5S_ALL,H5S_ALL,H5P_DEFAULT,snpdata);
 	    }else{
 		offset2[0]=newsize2[0];
 		/*extend data later for the 2nd to the last slab*/
-                if(i+1==LENGTH && REM2!=0){
- 		     count2[0] = REM2;
-		     newsize2[0]=newsize2[0]+REM2;
-		     dim2[0]=REM2;
+                if(fp==NULL && counter2>0){
+ 		     count2[0] = counter2;
+		     newsize2[0]=newsize2[0]+counter2;
+		     dim2[0]=counter2;
     		     memspace2 = H5Screate_simple(2,dim2,maxdim2); 
 		}else{
-		     newsize2[0]=newsize2[0]+CHUNKSIZE2;
+		     newsize2[0]=newsize2[0]+counter2;
 		}
 		status = H5Dset_extent(dset2,newsize2);
 	 	space2 = H5Dget_space(dset2);
@@ -352,7 +354,7 @@ int main(int argc, char **argv){
 	    	status = H5Dwrite(dset2,H5T_NATIVE_INT,memspace2,space2,H5P_DEFAULT,snpdata);
 	    	status = H5Sclose(space2);
 	    }
-	    counter2=-1;
+	    counter2=0;
 	}
  	//cout << "\n";
     }/*end subset loading*//*end subset loading*/
