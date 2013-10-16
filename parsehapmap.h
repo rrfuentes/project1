@@ -16,6 +16,7 @@
 #include <map>
 #include <assert.h>
 #include <sys/resource.h>
+#include "/home/roven/Documents/blosc-1.2.3/hdf5/blosc_filter.h"
 
 #define CHUNKSIZE1 300 //500 //10
 #define CHUNKSIZE2_1 1200 //500 //10
@@ -34,8 +35,6 @@
 #define SIZE10 30
 
 using namespace std;
-
-static char *fileModel = 0;
 
 typedef struct{
     char rs[SIZE1];
@@ -131,6 +130,11 @@ int writeHapmap(string inputfile,string varPath, string varName, string datafile
     Calls["NG"]=23;
     Calls["NN"]=24;
     
+    /* Register the filter with the library */
+    char *version, *date;
+    int r = register_blosc(&version, &date);
+    printf("Blosc version info: %s (%s)\n", version, date);
+
     /*create new file*/
     string miscvar, snpvar,inipath,headervar,linestream;
     hid_t file,group;
@@ -178,8 +182,11 @@ int writeHapmap(string inputfile,string varPath, string varName, string datafile
     /*create chunk*/
     cparms1 = H5Pcreate(H5P_DATASET_CREATE);
     status = H5Pset_chunk(cparms1,1,chkdim1);
+    status = H5Pset_deflate(cparms1,8); //compression
     cparms2 = H5Pcreate(H5P_DATASET_CREATE);
     status = H5Pset_chunk(cparms2,2,chkdim2);
+    status = H5Pset_deflate(cparms2,8); //compression
+    status = H5Pset_filter(cparms2, FILTER_BLOSC, H5Z_FLAG_OPTIONAL, 0, NULL);
 
     t1 = H5Tcopy(H5T_C_S1);
     t2 = H5Tcopy(H5T_C_S1);
