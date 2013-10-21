@@ -8,6 +8,7 @@
 */
  
 /*Field with Number='.' should be represented using string*/
+//Assumption: Info and FORMAT fields are sorted in raw header
 
 #include "hdf5.h"
 #include <stdio.h>
@@ -327,12 +328,14 @@ int parseInfo(string &linestream,int idx1, int idx2, MISC*& misc, int pos, map<s
     return 0;
 }
 
-unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> ids){
-    int temp =0, flags = 0;
+unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> ids,int *&tokenidx){
+    int temp =0, flags = 0,fieldpos=0,x=0;
     idx1+=3; //skip GT for flag
     while(idx1<idx2){
         temp = linestream.find_first_of(":\t",idx1+1); 
-        flags |= 1<< (ids.find(linestream.substr(idx1,temp-idx1))->second);
+	fieldpos = ids.find(linestream.substr(idx1,temp-idx1))->second;
+	tokenidx[x++]=fieldpos; //needed to track unsorted FORMAT fields
+        flags |= 1<< (fieldpos);
         idx1 = temp+1;
     }
     /*for(int x=0;x<ids.size();x++){
@@ -369,7 +372,7 @@ int parseAlt(string linestream,int idx1, int idx2,MISC *&misc,int pos,vector<cha
     return 0;
 }
 
-int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string,int> formmap, map<string,int> contigmap,vector<char> &callvec, int snpidx,int &indelcount){
+int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string,int> formmap, map<string,int> contigmap,vector<char> &callvec, int snpidx,int &indelcount,int *&tokenidx){
     int idx1=0,idx2=0;
     bool indel=0;
     unsigned int flag=0;
@@ -423,11 +426,11 @@ int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string
     idx1=idx2+1;
     //FORMAT
     idx2 = linestream.find_first_of("\t",idx1+1); 
-    misc[snpidx].format = parseFormat(linestream,idx1,idx2,formmap);
+    misc[snpidx].format = parseFormat(linestream,idx1,idx2,formmap,tokenidx);
     //cout <<  misc[snpidx].chrom << " " << misc[snpidx].pos << " "<< misc[snpidx].id << " " << misc[snpidx].ref << " " << misc[snpidx].alt << " " << misc[snpidx].qual << " " << misc[snpidx].filter << "\n";
     if(indel) indelcount++;
     
-    return idx2;
+    return idx2; //return last linestream index
 }
 
 
@@ -559,25 +562,114 @@ int getEntryCount(int num,int call){
     return num;
 }
 
-void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int genidx,int snpidx,int samcount,int lastparsepos,vector<char> &callvec,map<string,int> states,META_3 *format,unsigned int formbit){
+void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&intvar,float ***&floatvar,char ***&charvar,vector<vector<string> > &stringvar,int *&varloc){
+    int t1=0,t2=0,t3=0,t4=0;
+    varloc = (int*)malloc(formcount*sizeof(int)); //for locating field in the multidim variable
+
+    for(int i=0;i<formcount;i++){
+	if(!strcmp(format[i].id,"GT")) continue;
+        if(format[i].num==1){
+    	    if(format[i].type[0]=='0'){ //integer
+	        varloc[i] = t1++;
+    	    }else if(format[i].type[0]=='1'){ //float
+             	varloc[i] = t2++;
+    	    }else if(format[i].type[0]=='3'){ //character
+            	varloc[i] = t3++;
+    	    }else if(format[i].type[0]=='4'){ //string
+	    	varloc[i] = t4++;
+    	    }
+        }else{
+	    varloc[i] = t4++;
+	}
+    }
+    if(t1>0){
+	intvar = (int***)malloc(t1*sizeof(int**));
+	intvar[0] = (int**)malloc(t1*CHUNK*sizeof(int*));
+	intvar[0][0] = (int*)malloc(t1*CHUNK*samcount*sizeof(int));
+	for (int i = 0; i < t1; i++){
+            intvar[i] = intvar[0] + CHUNK*i;
+            for (int j = 0; j < CHUNK; j++)
+            {
+            	intvar[i][j] = intvar[0][0] + CHUNK*samcount*i + samcount*j;
+            }
+    	}
+    }
+    if(t2>0){
+	floatvar = (float***)malloc(t2*sizeof(float**));
+	floatvar[0] = (float**)malloc(t2*CHUNK*sizeof(float*));
+	floatvar[0][0] = (float*)malloc(t2*CHUNK*samcount*sizeof(float));
+	for (int i = 0; i < t1; i++){
+            floatvar[i] = floatvar[0] + CHUNK*i;
+            for (int j = 0; j < CHUNK; j++)
+            {
+            	floatvar[i][j] = floatvar[0][0] + CHUNK*samcount*i + samcount*j;
+            }
+    	}
+    }
+    if(t3>0){
+	charvar = (char***)malloc(t3*sizeof(char**));
+	charvar[0] = (char**)malloc(t3*CHUNK*sizeof(char*));
+	charvar[0][0] = (char*)malloc(t3*CHUNK*samcount*sizeof(char));
+	for (int i = 0; i < t1; i++){
+            charvar[i] = charvar[0] + CHUNK*i;
+            for (int j = 0; j < CHUNK; j++)
+            {
+            	charvar[i][j] = charvar[0][0] + CHUNK*samcount*i + samcount*j;
+            }
+    	}
+    }
+
+    //STRING
+}
+
+void parseFORMATfield(vector<vector<string> > token,int &tokenidx,unsigned int formbit,int ***&intvar,int *varloc,int fieldidx,int relidx,int samcount){
+    if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
+	for(int x=0;x<samcount;x++){
+    	    if(token[x].size()){ //-1 no value; -2 indels/structural variants; -3 not a field
+	    	intvar[varloc[fieldidx]][relidx][x] = (strcmp(token[x][tokenidx].c_str(),"."))?atoi(token[x][tokenidx].c_str()):-1;
+            }else{
+	    	intvar[varloc[fieldidx]][relidx][x] = -2;
+	    }
+        }
+        tokenidx++; 
+    }else{ //not a FORMAT field for current SNP
+	for(int x=0;x<samcount;x++){
+	    intvar[varloc[fieldidx]][relidx][x] = -3;
+        }
+    } 
+   
+}
+
+void parseFORMATfield(vector<vector<string> > token,int &tokenidx,unsigned int formbit,float ***&floatvar,int *varloc,int fieldidx,int relidx,int samcount){
+    
+}
+
+void parseFORMATfield(vector<vector<string> > token,int &tokenidx,unsigned int formbit,char ***&charvar,int *varloc,int fieldidx,int relidx,int samcount){
+    
+}
+
+void parseFORMATfield(vector<vector<string> > token,int &tokenidx,unsigned int formbit,vector<vector<string> > &stringvar,int *varloc,int fieldidx,int relidx,int samcount){
+    if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
+	
+        tokenidx++; 
+    }else{ //not a FORMAT field for current SNP
+	
+    }
+}
+
+
+
+void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int relidx,int samcount,int lastparsepos,vector<char> callvec,map<string,int> states,META_3 *format,unsigned int formbit,int formcount,int ***&intvar,float ***&floatvar,char ***&charvar,vector<vector<string> > &stringvar,int *varloc,int *&tokenidx){
     int idx1 = lastparsepos, idx2 = lastparsepos,temp=0,counter=0; 
     int last = linestream.length(); 
-    //variables to contain parsed fields(single/multi-value)
-    int **intvar=NULL; //2D to accomodate fields using same datatype
-    float **floatvar=NULL;
-    char **charvar=NULL;
-    vector<vector<string> > stringvar;
-    vector<pair<int,int> > bitpos;
     vector<vector<string> > token;
     string callstr;
-    ostringstream num;
-    num << genidx;
     
     if(callvec[0]=='X' || callvec[1]=='X' || callvec[0]=='.' || callvec[1]=='.'){ //filter indels, structural variants,'.' calls
  	while(idx1<last){
             idx2 = linestream.find_first_of("\t",idx1+2); 
 	    if(idx2==linestream.npos) idx2=last;
-	    call[snpidx][counter] = 25;
+	    call[relidx][counter] = 25;
 	    idx1 = idx2+1;
             counter++;
         }
@@ -585,7 +677,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
 	while(idx1<last){ 
              //get Ref where 0-Ref 1..N-Alt
             if(linestream[idx1]=='.' || linestream[idx1+2]=='.'){
-		call[snpidx][counter] = 25;
+		call[relidx][counter] = 25;
 		idx1+=2;
 	    }else{
 		temp=linestream[idx1]-48; //convert from char to int  
@@ -594,7 +686,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
             	idx1+=2;  
 	    	temp=linestream[idx1]-48; //convert from char to int  
 	    	callstr += callvec[temp]; //get the call
-             	call[snpidx][counter] = states.find(callstr)->second; //save the call code
+             	call[relidx][counter] = states.find(callstr)->second; //save the call code
 	    }
 	    
 	    token.push_back( vector<string>() );
@@ -603,7 +695,9 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
 	    if(idx2>idx1) idx1+=2;
             //cout << linestream.substr(idx1,idx2-idx1) << "\t";
             int fieldctr=0;
-            while(idx1<idx2){
+ 
+            //PARSE FORMAT fields
+            while(idx1<idx2){ 
             	//other info for each sample aside of GT
                 temp = linestream.find_first_of(":\t",idx1+1); //skip : after GT 
 		if(temp==linestream.npos) temp = last;
@@ -615,15 +709,29 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int ge
             idx1 = idx2+1;
             counter++; 
     	}
-       
-    	int typecount = bitpos.size();
-        
+
+        //store FORMAT fields
+	for(int i=0;i<formcount;i++){
+            if(!strcmp(format[i].id,"GT")) continue;
+            if(format[i].num==1){
+    	    	if(format[i].type[0]=='0'){ //integer
+	            parseFORMATfield(token,tokenidx,formbit,intvar,varloc,i,relidx,samcount);
+    	    	}else if(format[i].type[0]=='1'){ //float
+             	    parseFORMATfield(token,tokenidx,formbit,floatvar,varloc,i,relidx,samcount);
+    	    	}else if(format[i].type[0]=='3'){ //character
+            	    parseFORMATfield(token,tokenidx,formbit,charvar,varloc,i,relidx,samcount);
+    	    	}else if(format[i].type[0]=='4'){ //string
+	    	    parseFORMATfield(token,tokenidx,formbit,stringvar,varloc,i,relidx,samcount);
+    	    	}
+            }else{
+	     	parseFORMATfield(token,tokenidx,formbit,stringvar,varloc,i,relidx,samcount);
+	    }
+	}
     	
     	//free
     	for(int x=0;x<samcount;x++)
 	    token[x].clear();
     	token.clear();
-    	bitpos.clear();
     }
     callvec.clear();
 }
@@ -719,8 +827,18 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     loadHeader2(contig,file,contigcount,contigmap,gpath1);
     loadHeaderInfoFormat(false,info,infocount,infomap,file,gpath1); //INFO fields
     loadHeaderInfoFormat(true,format,formcount,formmap,file,gpath1); //FORMAT fields
-    
+ 
     int i=0, counter1=0,counter2=0,lastparsepos;
+    int *varloc; //location of FORMAT fields in multidimensional variables(by type) below
+    int *tokenidx=(int*)malloc(formcount*sizeof(int)); //index of each FORMAT field values in the tokenized data
+			     //this is necessary since FORMAT fields/SNP may not be in order 
+       //variables to contain parsed fields(single-value)
+    int ***intvar=NULL; //2D to accomodate fields using same datatype
+    float ***floatvar=NULL;
+    char ***charvar=NULL;
+      //variables to contain parsed fields(multi-value/string type)
+    vector<vector<string> > stringvar; 
+
     hid_t memtype1,space1,memspace1,dset1,cparms1,dataprop1; //variables for MISC
     hid_t *fieldtype_a, *space_a, *memspace_a,*dset_a; //variables for FORMAT field
     hid_t space2,memspace2,dset2,cparms2,dataprop2; //variables for GT
@@ -735,6 +853,9 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     hsize_t count2[2]={CHUNKSIZE2_1,samcount};
     hsize_t newsize1[1]={CHUNKSIZE1};
     hsize_t newsize2[2]={CHUNKSIZE2_1,samcount};
+
+    //allocate space for FORMAT field container/var
+    allocFieldVar(format,formcount,CHUNKSIZE2_1,samcount,intvar,floatvar,charvar,stringvar,varloc);
 
     //create var for misc and genotype calls
     call=(int**)malloc(CHUNKSIZE2_1*sizeof(int*));
@@ -752,9 +873,9 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     for(i=0;fp!=NULL;i++){ 
         getline(fp,linestream); 
 	if(fp!=NULL){
-            lastparsepos = parseMisc(linestream,misc,infomap,formmap,contigmap,callvec,counter1,indelcount);
+            lastparsepos = parseMisc(linestream,misc,infomap,formmap,contigmap,callvec,counter1,indelcount,tokenidx);
             counter1++; 
-            parseGenotypes(file,gpath2,linestream,call,i,counter2,samcount,lastparsepos+1,callvec,states,format,misc[counter1-1].format);
+            parseGenotypes(file,gpath2,linestream,call,counter2,samcount,lastparsepos+1,callvec,states,format,misc[counter1-1].format,formcount,intvar,floatvar,charvar, stringvar,varloc,tokenidx);
             counter2++;
         } 
         if(counter1==CHUNKSIZE1 || fp==NULL){
@@ -794,8 +915,24 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 	        memspace2 = H5Dget_space(dset2);
                 setH5FORMATfield(file,fieldtype_a,space_a,memspace_a, dset_a,cparms2,dataprop2,CHUNKSIZE2_1,CHUNKSIZE2_2,samcount,inipath,format,formcount);
                 
-                //write first slab
+                //write first GT slab
             	status = H5Dwrite(dset2, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &call[0][0]); 
+		//write first slab for other FORMAT fields
+		for(int i=0;i<formcount;i++){ 
+  		    if(format[i].num==1){
+    	    	    	if(format[i].type[0]=='0'){ //integer
+	        	    status = H5Dwrite(dset_a[i],fieldtype_a[i], H5S_ALL, H5S_ALL, H5P_DEFAULT, &intvar[varloc[i]][0][0]); 
+    	    	    	}else if(format[i].type[0]=='1'){ //float
+             		    
+    	    	    	}else if(format[i].type[0]=='3'){ //character
+            		    
+    	    	    	}else if(format[i].type[0]=='4'){ //string
+	    		    
+    	    	    	}
+        	    }else{
+	    		
+		    }
+	        }
 	    }else{ 
 		offset2[0]=newsize2[0];
           	//extend data later for the 2nd to the last slab
@@ -816,7 +953,9 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 	 	space2 = H5Dget_space(dset2);
                 status = H5Sselect_hyperslab(space2, H5S_SELECT_SET,
  			(const hsize_t*)offset2,NULL, count2, NULL);
+                //write GT
 		status = H5Dwrite(dset2,H5T_NATIVE_INT,memspace2,space2,H5P_DEFAULT,&call[0][0]); 
+                 
                 for(int i=0;i<formcount;i++){ //exclude the first field(GT)
 		    if(!strcmp(format[i].id,"GT")) continue;
 		    status = H5Dset_extent(dset_a[i],newsize2);
