@@ -18,6 +18,7 @@
 #include <sstream>
 #include <fstream>
 #include <map>
+#include <queue>
 #include <assert.h>
 #include <sys/resource.h>
 #include <vector>
@@ -328,13 +329,13 @@ int parseInfo(string &linestream,int idx1, int idx2, MISC*& misc, int pos, map<s
     return 0;
 }
 
-unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> ids,int *&tokenidx){
-    int temp =0, flags = 0,fieldpos=0,x=0;
+unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> ids,queue<int> &tokenidx){
+    int temp =0, flags = 0,fieldpos=0;
     idx1+=3; //skip GT for flag
     while(idx1<idx2){
         temp = linestream.find_first_of(":\t",idx1+1); 
 	fieldpos = ids.find(linestream.substr(idx1,temp-idx1))->second;
-	tokenidx[x++]=fieldpos; //needed to track unsorted FORMAT fields
+	tokenidx.push(fieldpos); //needed to track unsorted FORMAT fields
         flags |= 1<< (fieldpos);
         idx1 = temp+1;
     }
@@ -372,7 +373,7 @@ int parseAlt(string linestream,int idx1, int idx2,MISC *&misc,int pos,vector<cha
     return 0;
 }
 
-int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string,int> formmap, map<string,int> contigmap,vector<char> &callvec, int snpidx,int &indelcount,int *&tokenidx){
+int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string,int> formmap, map<string,int> contigmap,vector<char> &callvec, int snpidx,int &indelcount,queue<int> &tokenidx){
     int idx1=0,idx2=0;
     bool indel=0;
     unsigned int flag=0;
@@ -622,16 +623,17 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
     //STRING
 }
 
-void parseFORMATfield(vector<vector<string> > token,int &tokenidx,unsigned int formbit,int ***&intvar,int *varloc,int fieldidx,int relidx,int samcount){
+void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,int ***&intvar,int *varloc,int fieldidx,int relidx,int samcount){
     if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
+        int temp=tokenidx.front(); //index of the field relative to the order in header
 	for(int x=0;x<samcount;x++){
     	    if(token[x].size()){ //-1 no value; -2 indels/structural variants; -3 not a field
-	    	intvar[varloc[fieldidx]][relidx][x] = (strcmp(token[x][tokenidx].c_str(),"."))?atoi(token[x][tokenidx].c_str()):-1;
+	    	intvar[varloc[fieldidx]][relidx][x] = (strcmp(token[x][temp].c_str(),"."))?atoi(token[x][temp].c_str()):-1;
             }else{
 	    	intvar[varloc[fieldidx]][relidx][x] = -2;
 	    }
         }
-        tokenidx++; 
+	tokenidx.pop();
     }else{ //not a FORMAT field for current SNP
 	for(int x=0;x<samcount;x++){
 	    intvar[varloc[fieldidx]][relidx][x] = -3;
@@ -640,18 +642,18 @@ void parseFORMATfield(vector<vector<string> > token,int &tokenidx,unsigned int f
    
 }
 
-void parseFORMATfield(vector<vector<string> > token,int &tokenidx,unsigned int formbit,float ***&floatvar,int *varloc,int fieldidx,int relidx,int samcount){
+void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,float ***&floatvar,int *varloc,int fieldidx,int relidx,int samcount){
     
 }
 
-void parseFORMATfield(vector<vector<string> > token,int &tokenidx,unsigned int formbit,char ***&charvar,int *varloc,int fieldidx,int relidx,int samcount){
+void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,char ***&charvar,int *varloc,int fieldidx,int relidx,int samcount){
     
 }
 
-void parseFORMATfield(vector<vector<string> > token,int &tokenidx,unsigned int formbit,vector<vector<string> > &stringvar,int *varloc,int fieldidx,int relidx,int samcount){
+void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,vector<vector<string> > &stringvar,int *varloc,int fieldidx,int relidx,int samcount){
     if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
 	
-        tokenidx++; 
+        tokenidx.pop(); 
     }else{ //not a FORMAT field for current SNP
 	
     }
@@ -659,7 +661,7 @@ void parseFORMATfield(vector<vector<string> > token,int &tokenidx,unsigned int f
 
 
 
-void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int relidx,int samcount,int lastparsepos,vector<char> callvec,map<string,int> states,META_3 *format,unsigned int formbit,int formcount,int ***&intvar,float ***&floatvar,char ***&charvar,vector<vector<string> > &stringvar,int *varloc,int *&tokenidx){
+void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int relidx,int samcount,int lastparsepos,vector<char> callvec,map<string,int> states,META_3 *format,unsigned int formbit,int formcount,int ***&intvar,float ***&floatvar,char ***&charvar,vector<vector<string> > &stringvar,int *varloc,queue<int> &tokenidx){
     int idx1 = lastparsepos, idx2 = lastparsepos,temp=0,counter=0; 
     int last = linestream.length(); 
     vector<vector<string> > token;
@@ -830,8 +832,8 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
  
     int i=0, counter1=0,counter2=0,lastparsepos;
     int *varloc; //location of FORMAT fields in multidimensional variables(by type) below
-    int *tokenidx=(int*)malloc(formcount*sizeof(int)); //index of each FORMAT field values in the tokenized data
-			     //this is necessary since FORMAT fields/SNP may not be in order 
+    queue<int> tokenidx; //index of each FORMAT field values in the tokenized data
+			 //this is necessary since FORMAT fields/SNP may not be in order 
        //variables to contain parsed fields(single-value)
     int ***intvar=NULL; //2D to accomodate fields using same datatype
     float ***floatvar=NULL;
