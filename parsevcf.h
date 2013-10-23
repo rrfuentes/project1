@@ -10,7 +10,7 @@
 /*Field with Number='.' should be represented using string*/
 //Add: may not specify contig IDs
 //ERROR: CHUNK - may be caused by incomplete loading
-//Incorrect values for FORMAT fields
+//ERROR when loading sample2.vcf
 
 #include "hdf5.h"
 #include <stdio.h>
@@ -26,10 +26,10 @@
 #include <vector>
 #include <math.h>
 
-#define CHUNKSIZE1 5 //5000
-#define CHUNKSIZE2_1 5 //100000
-#define CHUNKSIZE2_2 1 //2 
-#define SNP_CHUNK_CACHE 1048576000//268435456 /*250MB*/
+#define CHUNKSIZE1 10000
+#define CHUNKSIZE2_1 50000
+#define CHUNKSIZE2_2 3 
+#define SNP_CHUNK_CACHE 52428800//1048576000//268435456 /*250MB*/
 #define SIZE1 20
 #define SIZE2 20
 #define SIZE3 30
@@ -536,7 +536,6 @@ void setH5FORMATfield(hid_t file, hid_t *&fieldtype_a,hid_t *&space_a,hid_t *&me
 
     for(int i=0;i<formcount;i++){ 
 	string name = inipath + "/FORMATfields/" + format[i].id; 	
-	cout << name << "\n";
         //No flag type for FORMAT fields
         space_a[i] = H5Screate_simple(2,dim,maxdim); //create data space
         if(format[i].num==1){
@@ -639,6 +638,40 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
     //STRING
 }
 
+void freeFieldVar(int ***&intvar,float ***&floatvar,char ***&charvar,vector<vector<string> > &stringvar){
+    if(intvar!=NULL){
+    	free(intvar[0][0]);
+    	free(intvar[0]);
+    	free(intvar);
+    }
+    if(floatvar!=NULL){
+    	free(floatvar[0][0]);
+    	free(floatvar[0]);
+    	free(floatvar);
+    }
+    if(charvar!=NULL){
+    	free(charvar[0][0]);
+    	free(charvar[0]);
+    	free(charvar);
+    }
+    
+
+}
+
+void closeIden(hid_t *&fieldtype_a,hid_t *&space_a,hid_t *&memspace_a,hid_t *&dset_a,int formcount){
+    herr_t status;
+    for(int i=0;i<formcount;i++){ //space_a is closed already
+	status = H5Dclose(dset_a[i]);
+    	status = H5Tclose(fieldtype_a[i]);
+	status = H5Sclose(memspace_a[i]);
+    }
+    assert(status >=0);
+    free(fieldtype_a);
+    free(dset_a);
+    free(space_a);
+    free(memspace_a);
+}
+
 void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,int ***&intvar,int *varloc,int fieldidx,int relidx,int samcount){
     if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
         int temp=tokenidx.front(); //index of the each FORMAT fields in a sample
@@ -659,11 +692,21 @@ void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigne
 }
 
 void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,float ***&floatvar,int *varloc,int fieldidx,int relidx,int samcount){
-    
+    if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
+	
+        tokenidx.pop(); 
+    }else{ //not a FORMAT field for current SNP
+	
+    }
 }
 
 void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,char ***&charvar,int *varloc,int fieldidx,int relidx,int samcount){
-    
+    if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
+	
+        tokenidx.pop(); 
+    }else{ //not a FORMAT field for current SNP
+	
+    }
 }
 
 void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,vector<vector<string> > &stringvar,int *varloc,int fieldidx,int relidx,int samcount){
@@ -694,6 +737,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int sam
             if(linestream[idx1]=='.' || linestream[idx1+2]=='.'){
                 intvar[gtloc][relidx][counter] = 26; //No entry
 		idx1=linestream.find_first_of(":",idx1)+1; //some with '.' may still have FORMAT values
+	
 	    }else{
                 //heterozygous
 		temp=linestream[idx1]-48; //convert from char to int  
@@ -703,8 +747,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int sam
 	    	callstr += callvec[temp]; //get the call
                 intvar[gtloc][relidx][counter] = states.find(callstr)->second; //save the call code
 	    }
-	    
-	    
+	   
             idx2 = linestream.find_first_of("\t",idx1); 
 	    if(idx2==linestream.npos) idx2=last; //check if last sample
 	    if(idx2>idx1) idx1+=2; 
@@ -745,7 +788,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int sam
     	
     	//free
     	for(int x=0;x<samcount;x++)
-	    token[x].clear();
+	   token[x].clear();
     	token.clear();
     }
     callvec.clear();
@@ -804,7 +847,6 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     META_2* contig=NULL;
     MISC* misc = NULL;
     META_3* info=NULL, *format = NULL;
-    int **call=NULL;
     int contigcount=0,infocount=0,formcount=0,samcount=0, indelcount = 0;
     
     /*create new file*/
@@ -842,7 +884,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     if(contigcount){ loadHeader2(file,contig,contigcount,contigmap,gpath1);} 
     loadHeaderInfoFormat(file,false,info,infocount,infomap,gpath1); //INFO fields 
     loadHeaderInfoFormat(file,true,format,formcount,formmap,gpath1); //FORMAT fields
-    cout << "here";
+    
     int counter1=0,counter2=0,lastparsepos; 
     int *varloc; //location of FORMAT fields in multidimensional variables(by type) below
     queue<int> tokenidx; //index of each FORMAT field values in the tokenized data
@@ -878,7 +920,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 	return 1;
     }
     setAlleleStates(states); 	
-
+    
     for(int x=0;fp!=NULL;x++){ 
         getline(fp,linestream); 
 	if(fp!=NULL){
@@ -970,7 +1012,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
         	    }else{
 	    		
 		    }
-		    status = H5Sclose(space_a[i]);
+		    status = H5Sclose(space_a[i]); 
 		}
 	    } 
 	    cout << "\nCall-Chunk" << (x+1)/CHUNKSIZE2_1 << "\n";
@@ -1002,6 +1044,8 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     free(format);
     free(misc);
     H5Fclose(file);
-
+    freeFieldVar(intvar,floatvar,charvar,stringvar);
+    closeIden(fieldtype_a,space_a,memspace_a,dset_a,formcount);
+    free(varloc);
     return 0;
 }
