@@ -32,7 +32,7 @@
 #define SNP_CHUNK_CACHE 1048576000//268435456 /*250MB*/
 #define SIZE1 20
 #define SIZE2 20
-#define SIZE3 20
+#define SIZE3 30
 #define SIZE4 20
 #define SIZE5 15
 #define SIZE6 10
@@ -101,6 +101,7 @@ void parseHeader1(string linestream, map<string,string> &headmap){
 	if(ret==headmap.end()){
 	    headmap.insert(pair<string,string>(key,linestream.substr(first,len-first))); 
 	}else{
+	    headmap[key].append(";");
 	    headmap[key].append(linestream.substr(first,len-first));
 	}
     }else{
@@ -109,6 +110,7 @@ void parseHeader1(string linestream, map<string,string> &headmap){
 	if(ret==headmap.end()){
 	    headmap.insert(pair<string,string>(key,linestream.substr(first,len-first)));
 	}else{
+            headmap[key].append(";");
 	    headmap[key].append(linestream.substr(first,len-first));
 	}
     }
@@ -234,7 +236,7 @@ void loadHeaderInfoFormat(hid_t file,bool flag,META_3 *&field,int count,map<stri
     hid_t memtype,space,dset,t1,t2,t3;
     hsize_t dim[1]={count}; 
     herr_t status;
-    string name;
+    string name; 
     if(flag) name= gpath + "/format";
     else name= gpath + "/info";
     space = H5Screate_simple(1,dim,NULL);
@@ -259,13 +261,13 @@ void loadHeaderInfoFormat(hid_t file,bool flag,META_3 *&field,int count,map<stri
     status = H5Tclose(t1);
     status = H5Tclose(t2);
     status = H5Tclose(t3);
-    assert(status>=0); 
+    assert(status>=0);  
     for(int x=0;x<count;x++){ 
         map.insert(pair<string,int>(string(field[x].id),x));
         field[x].type[0]=checkType(field[x].type);
         //field[x].type[1]='\0';
         free(field[x].desc);
-    } 
+    }  
     cout << "\n";
 }
 
@@ -291,6 +293,7 @@ int loadSampleNames(hid_t file,string linestream, string inipath){
     samples[0] = (char*)malloc(samplesize*SIZE3*sizeof(char));
     for(x=0;x<samplesize;x++){ 
 	samples[x]=samples[0]+x*SIZE3;
+        strcpy(samples[x],temp[x].c_str());
     } 
     count=x;
     
@@ -342,13 +345,12 @@ int parseInfo(string &linestream,int idx1, int idx2, MISC*& misc, int pos, map<s
 }
 
 unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> ids,queue<int> &tokenidx){
-    int temp =0, flags = 0,fieldpos=0;
+    int temp =0, flags = 0,tokenpos=0;
     idx1+=3; //skip GT for flag
     while(idx1<idx2){
         temp = linestream.find_first_of(":\t",idx1+1); 
-	fieldpos = ids.find(linestream.substr(idx1,temp-idx1))->second;
-	tokenidx.push(fieldpos); //needed to track FORMAT fields not sorted according to header order
-        flags |= 1<< (fieldpos);
+	tokenidx.push(tokenpos++); //needed to track FORMAT fields not sorted according to header order
+        flags |= 1<< (ids.find(linestream.substr(idx1,temp-idx1))->second);
         idx1 = temp+1;
     }
     /*for(int x=0;x<ids.size();x++){
@@ -509,28 +511,7 @@ void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &c
     assert(status>=0);
 }
 
-void setH5CallFormat(hid_t file, hid_t &space,hid_t &dset,hid_t &cparms,hid_t &dataprop,int CHUNK1,int CHUNK2,int samplesize,string inipath){
-    herr_t status;
-    hsize_t dim[2]={CHUNK1,samplesize};
-    hsize_t maxdim[2] = {H5S_UNLIMITED,samplesize};
-    hsize_t chkdim[2] = {CHUNK1,CHUNK2};
-
-    string name = inipath + "/call";
-    space = H5Screate_simple(2,dim,maxdim); //create data space
-    cparms = H5Pcreate(H5P_DATASET_CREATE); //create chunk 
-    status = H5Pset_chunk(cparms,2,chkdim);
-    status = H5Pset_deflate(cparms,8); //compression
-    
-    //create dataset access property list for MISC dataset
-    dataprop = H5Pcreate(H5P_DATASET_ACCESS);
-    status = H5Pset_chunk_cache(dataprop,9973,
-             SNP_CHUNK_CACHE*2,H5D_CHUNK_CACHE_W0_DEFAULT); //set snp chunk size
-    assert(status >=0);
-    dset = H5Dcreate (file, name.c_str(), H5T_NATIVE_INT, space, H5P_DEFAULT, cparms, dataprop);
-    
-}
-
-void setH5FORMATfield(hid_t file, hid_t *&fieldtype_a,hid_t *&space_a,hid_t *&memspace_a,hid_t *&dset_a,hid_t cparms,hid_t dataprop,int CHUNK1,int CHUNK2,int samplesize,string inipath,META_3 *format,int formcount){
+void setH5FORMATfield(hid_t file, hid_t *&fieldtype_a,hid_t *&space_a,hid_t *&memspace_a,hid_t *&dset_a,hid_t &cparms,hid_t &dataprop,int CHUNK1,int CHUNK2,int samplesize,string inipath,META_3 *format,int formcount){
     herr_t status;
     hsize_t dim[2]={CHUNK1,samplesize};
     hsize_t maxdim[2] = {H5S_UNLIMITED,samplesize};
@@ -541,15 +522,26 @@ void setH5FORMATfield(hid_t file, hid_t *&fieldtype_a,hid_t *&space_a,hid_t *&me
     space_a = (hid_t*)malloc(32*sizeof(hid_t)); 
     memspace_a = (hid_t*)malloc(32*sizeof(hid_t)); 
     dset_a = (hid_t*)malloc(32*sizeof(hid_t)); 
-    for(int i=0;i<formcount;i++){ //exclude the first field(GT)
+
+    //CHUNKING and CACHING
+    cparms = H5Pcreate(H5P_DATASET_CREATE); //create chunk 
+    status = H5Pset_chunk(cparms,2,chkdim);
+    status = H5Pset_deflate(cparms,8); //compression
+    
+    //create dataset access property list for MISC dataset
+    dataprop = H5Pcreate(H5P_DATASET_ACCESS);
+    status = H5Pset_chunk_cache(dataprop,9973,
+             SNP_CHUNK_CACHE*2,H5D_CHUNK_CACHE_W0_DEFAULT); //set snp chunk size
+    assert(status >=0); 
+
+    for(int i=0;i<formcount;i++){ 
 	string name = inipath + "/FORMATfields/" + format[i].id; 	
 	cout << name << "\n";
-	if(!strcmp(format[i].id,"GT")) continue;
         //No flag type for FORMAT fields
         space_a[i] = H5Screate_simple(2,dim,maxdim); //create data space
         if(format[i].num==1){
             //cparms and dataprop for GT is used for other fields 
-    	    if(format[i].type[0]=='0'){ //integer
+    	    if(format[i].type[0]=='0' || !strcmp(format[i].id,"GT")){ //integer/GT
 	        fieldtype_a[i]=H5Tcopy(H5T_NATIVE_INT);
             	dset_a[i] = H5Dcreate (file, name.c_str(), H5T_NATIVE_INT, space_a[i], H5P_DEFAULT, cparms, dataprop);
     	    }else if(format[i].type[0]=='1'){ //float
@@ -593,9 +585,8 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
     varloc = (int*)malloc(formcount*sizeof(int)); //for locating field in the multidim variable
 
     for(int i=0;i<formcount;i++){
-	if(!strcmp(format[i].id,"GT")) continue;
         if(format[i].num==1){
-    	    if(format[i].type[0]=='0'){ //integer
+    	    if(format[i].type[0]=='0' || !strcmp(format[i].id,"GT")){ //integer/GT
 	        varloc[i] = t1++;
     	    }else if(format[i].type[0]=='1'){ //float
              	varloc[i] = t2++;
@@ -611,7 +602,7 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
     if(t1>0){
 	intvar = (int***)malloc(t1*sizeof(int**));
 	intvar[0] = (int**)malloc(t1*CHUNK*sizeof(int*));
-	intvar[0][0] = (int*)malloc(t1*CHUNK*samcount*sizeof(int));
+	intvar[0][0] = (int*)calloc(t1,CHUNK*samcount*sizeof(int));
 	for (int i = 0; i < t1; i++){
             intvar[i] = intvar[0] + CHUNK*i;
             for (int j = 0; j < CHUNK; j++)
@@ -623,7 +614,7 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
     if(t2>0){
 	floatvar = (float***)malloc(t2*sizeof(float**));
 	floatvar[0] = (float**)malloc(t2*CHUNK*sizeof(float*));
-	floatvar[0][0] = (float*)malloc(t2*CHUNK*samcount*sizeof(float));
+	floatvar[0][0] = (float*)calloc(t2,CHUNK*samcount*sizeof(float));
 	for (int i = 0; i < t1; i++){
             floatvar[i] = floatvar[0] + CHUNK*i;
             for (int j = 0; j < CHUNK; j++)
@@ -635,7 +626,7 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
     if(t3>0){
 	charvar = (char***)malloc(t3*sizeof(char**));
 	charvar[0] = (char**)malloc(t3*CHUNK*sizeof(char*));
-	charvar[0][0] = (char*)malloc(t3*CHUNK*samcount*sizeof(char));
+	charvar[0][0] = (char*)calloc(t3,CHUNK*samcount*sizeof(char));
 	for (int i = 0; i < t1; i++){
             charvar[i] = charvar[0] + CHUNK*i;
             for (int j = 0; j < CHUNK; j++)
@@ -650,7 +641,7 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
 
 void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,int ***&intvar,int *varloc,int fieldidx,int relidx,int samcount){
     if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
-        int temp=tokenidx.front(); //index of the field relative to the order in header
+        int temp=tokenidx.front(); //index of the each FORMAT fields in a sample
 	for(int x=0;x<samcount;x++){
     	    if(token[x].size()){ 
 	    	intvar[varloc[fieldidx]][relidx][x] = (strcmp(token[x][temp].c_str(),"."))?atoi(token[x][temp].c_str()):-1; //-1 no value 
@@ -686,25 +677,22 @@ void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigne
 
 
 
-void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int relidx,int samcount,int lastparsepos,vector<char> &callvec,map<string,int> states,META_3 *format,unsigned int formbit,int formcount,int ***&intvar,float ***&floatvar,char ***&charvar,vector<vector<string> > &stringvar,int *varloc,queue<int> &tokenidx){
+void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int samcount,int lastparsepos,vector<char> &callvec,map<string,int> states,META_3 *format,unsigned int formbit,map<string,int> formmap,int ***&intvar,float ***&floatvar,char ***&charvar,vector<vector<string> > &stringvar,int *varloc,queue<int> &tokenidx){
     int idx1 = lastparsepos, idx2 = lastparsepos,temp=0,counter=0; 
-    int last = linestream.length(); 
+    int last = linestream.length(), formcount = formmap.size(),gtloc=0; 
     vector<vector<string> > token;
     string callstr;
     
+    gtloc = formmap.find("GT")->second;
     if(callvec[0]=='X' || callvec[1]=='X' || callvec[0]=='.' || callvec[1]=='.'){ //filter indels, structural variants,'.' calls
- 	while(idx1<last){
-            idx2 = linestream.find_first_of("\t",idx1+2); 
-	    if(idx2==linestream.npos) idx2=last;
-	    call[relidx][counter] = 25; //Indels/Incomplete Ref/Alt
-	    idx1 = idx2+1;
-            counter++;
+ 	for(int i=0;i<samcount;i++){
+            intvar[gtloc][relidx][i] = 25; //Indels/Incomplete Ref/Alt
         }
     }else{ //SNPs
 	while(idx1<last){ 
              //get GT where 0-Ref 1..N-Alt
             if(linestream[idx1]=='.' || linestream[idx1+2]=='.'){
-		call[relidx][counter] = 26; //No entry
+                intvar[gtloc][relidx][counter] = 26; //No entry
 		idx1=linestream.find_first_of(":",idx1)+1; //some with '.' may still have FORMAT values
 	    }else{
                 //heterozygous
@@ -713,23 +701,23 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int re
             	idx1+=2;  
 	    	temp=linestream[idx1]-48; //convert from char to int  
 	    	callstr += callvec[temp]; //get the call
-             	call[relidx][counter] = states.find(callstr)->second; //save the call code
+                intvar[gtloc][relidx][counter] = states.find(callstr)->second; //save the call code
 	    }
 	    
-	    token.push_back( vector<string>() ); //token of strings
+	    
             idx2 = linestream.find_first_of("\t",idx1); 
 	    if(idx2==linestream.npos) idx2=last; //check if last sample
-	    if(idx2>idx1) idx1+=2; cout << linestream[idx1] << " ";
+	    if(idx2>idx1) idx1+=2; 
             //cout << linestream.substr(idx1,idx2-idx1) << "\t";
-            int fieldctr=0;
  
             //PARSE FORMAT fields
+            token.push_back( vector<string>() ); //token of strings
             while(idx1<idx2){ 
-            	//other info aside of GT for each sample 
+            	//other info for each sample aside from GT 
                 temp = linestream.find_first_of(":\t",idx1+1);
 		if(temp==linestream.npos) temp = last;
                 token[counter].push_back(linestream.substr(idx1,temp-idx1));
-                //cout << token[counter][token[counter].size()-1] << "-";
+                //cout << token[counter][token[counter].size()-1] << "|";
                 idx1=temp+1;
 	    }
 	    //cout << "|";
@@ -739,8 +727,8 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int **&call,int re
 
         //store FORMAT fields
 	for(int i=0;i<formcount;i++){
-            if(!strcmp(format[i].id,"GT")) continue;
             if(format[i].num==1){
+                if(!strcmp(format[i].id,"GT")) continue; //already parsed
     	    	if(format[i].type[0]=='0'){ //integer
 	            parseFORMATfield(token,tokenidx,formbit,intvar,varloc,i,relidx,samcount);
     	    	}else if(format[i].type[0]=='1'){ //float
@@ -803,7 +791,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 	cout << "REPORT: Failed to complete writing the data" << endl;
 	return 1;
     }
-
+    
     char* line=NULL;
     map<string,string> headmap;
     map<string,int> states; //allele states
@@ -849,13 +837,13 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 	    cout << "REPORT: Failed to complete writing the data" << endl;
 	    return 1; /*finished reading header*/
 	}
-    }
+    } 
     loadHeader1(file,headmap,gpath1); 
-    if(contigcount){ loadHeader2(file,contig,contigcount,contigmap,gpath1);}
-    loadHeaderInfoFormat(file,false,info,infocount,infomap,gpath1); //INFO fields
+    if(contigcount){ loadHeader2(file,contig,contigcount,contigmap,gpath1);} 
+    loadHeaderInfoFormat(file,false,info,infocount,infomap,gpath1); //INFO fields 
     loadHeaderInfoFormat(file,true,format,formcount,formmap,gpath1); //FORMAT fields
-    
-    int i=0, counter1=0,counter2=0,lastparsepos;
+    cout << "here";
+    int counter1=0,counter2=0,lastparsepos; 
     int *varloc; //location of FORMAT fields in multidimensional variables(by type) below
     queue<int> tokenidx; //index of each FORMAT field values in the tokenized data
 			 //this is necessary since FORMAT fields/SNP may not be in order 
@@ -865,10 +853,9 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     char ***charvar=NULL;
       //variables to contain parsed fields(multi-value/string type)
     vector<vector<string> > stringvar; 
-
+    
     hid_t memtype1,space1,memspace1,dset1,cparms1,dataprop1; //variables for MISC
-    hid_t *fieldtype_a, *space_a, *memspace_a,*dset_a; //variables for FORMAT field
-    hid_t space2,memspace2,dset2,cparms2,dataprop2; //variables for GT
+    hid_t *fieldtype_a, *space_a, *memspace_a,*dset_a,cparms2,dataprop2; //variables for FORMAT field
     herr_t status;
     hsize_t dim1[1]={CHUNKSIZE1}; 
     hsize_t dim2[2]={CHUNKSIZE2_1,samcount};
@@ -884,11 +871,6 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     //allocate space for FORMAT field container/var
     allocFieldVar(format,formcount,CHUNKSIZE2_1,samcount,intvar,floatvar,charvar,stringvar,varloc);
 
-    //create var for misc and genotype calls
-    call=(int**)malloc(CHUNKSIZE2_1*sizeof(int*));
-    call[0]=(int*)malloc(CHUNKSIZE2_1*samcount*sizeof(int));
-    for(int x=0;x<CHUNKSIZE2_1;x++) call[x]=call[0]+x*samcount;
-
     misc = (MISC*)malloc(CHUNKSIZE1*sizeof(MISC));
     if(misc==NULL){
  	cout << "ERROR: Insufficient memory. Adjust the chunksize." << endl;
@@ -897,16 +879,16 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     }
     setAlleleStates(states); 	
 
-    for(i=0;fp!=NULL;i++){ 
+    for(int x=0;fp!=NULL;x++){ 
         getline(fp,linestream); 
 	if(fp!=NULL){
             lastparsepos = parseMisc(linestream,misc,infomap,formmap,contig,contigcount,contigmap,callvec,counter1, indelcount,tokenidx);
             counter1++; 
-            parseGenotypes(file,gpath2,linestream,call,counter2,samcount,lastparsepos+1,callvec,states,format,misc[counter1-1].format,formcount,intvar,floatvar,charvar, stringvar,varloc,tokenidx);
+            parseGenotypes(file,gpath2,linestream,counter2,samcount,lastparsepos+1,callvec,states,format,misc[counter1-1].format,formmap,intvar,floatvar,charvar, stringvar,varloc,tokenidx);
             counter2++;
         } 
         if(counter1==CHUNKSIZE1 || fp==NULL){
-            if(i+1==CHUNKSIZE1){ //first slab
+            if(x+1==CHUNKSIZE1){ //first slab
                 //set compound datatype and spaces
   		setH5MiscFormat(file,memtype1,space1,dset1,cparms1,dataprop1,CHUNKSIZE1,inipath);
                 memspace1 = H5Dget_space(dset1);
@@ -931,23 +913,19 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 		status = H5Dwrite(dset1,memtype1,memspace1,space1,H5P_DEFAULT,misc); 
                 status = H5Sclose(space1); 
 	    } 
-	    cout << "MISC-Chunk" << (i+1)/CHUNKSIZE1 << "\n";
+	    cout << "MISC-Chunk" << (x+1)/CHUNKSIZE1 << "\n";
             counter1=0;
         }
 	
         if(counter2==CHUNKSIZE2_1 || fp==NULL){
-            if(i+1==CHUNKSIZE2_1){ //first slab
+            if(x+1==CHUNKSIZE2_1){ //first slab
                 //set GT and FORMAT fields datatype and spaces
-  		setH5CallFormat(file,space2,dset2,cparms2,dataprop2,CHUNKSIZE2_1,CHUNKSIZE2_2,samcount,inipath);
-	        memspace2 = H5Dget_space(dset2);
                 setH5FORMATfield(file,fieldtype_a,space_a,memspace_a, dset_a,cparms2,dataprop2,CHUNKSIZE2_1,CHUNKSIZE2_2,samcount,inipath,format,formcount);
-                
-                //write first GT slab
-            	status = H5Dwrite(dset2, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &call[0][0]); 
+             
 		//write first slab for other FORMAT fields
 		for(int i=0;i<formcount;i++){ 
   		    if(format[i].num==1){
-    	    	    	if(format[i].type[0]=='0'){ //integer
+    	    	    	if(format[i].type[0]=='0' || !strcmp(format[i].id,"GT")){ //integer/GT
 	        	    status = H5Dwrite(dset_a[i],fieldtype_a[i], H5S_ALL, H5S_ALL, H5P_DEFAULT, &intvar[varloc[i]][0][0]); 
     	    	    	}else if(format[i].type[0]=='1'){ //float
              		    
@@ -967,33 +945,35 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
  		    count2[0] = counter2;
 		    newsize2[0]=newsize2[0]+counter2;
 		    dim2[0]=counter2;
-    		    memspace2 = H5Screate_simple(2,dim2,maxdim2);
 		    for(int i=0;i<formcount;i++){ 
-                        if(strcmp(format[i].id,"GT")){ //exclude the first field(GT)
-		            memspace_a[i] = H5Screate_simple(2,dim2,maxdim2);
-			}
+  			memspace_a[i] = H5Screate_simple(2,dim2,maxdim2);
 		    }
 		}else{
 		     newsize2[0]=newsize2[0]+counter2; 
 		}
-		status = H5Dset_extent(dset2,newsize2);
-	 	space2 = H5Dget_space(dset2);
-                status = H5Sselect_hyperslab(space2, H5S_SELECT_SET,
- 			(const hsize_t*)offset2,NULL, count2, NULL);
-                //write GT
-		status = H5Dwrite(dset2,H5T_NATIVE_INT,memspace2,space2,H5P_DEFAULT,&call[0][0]); 
-                 
-                for(int i=0;i<formcount;i++){ //exclude the first field(GT)
-		    if(!strcmp(format[i].id,"GT")) continue;
+		  
+                for(int i=0;i<formcount;i++){ 
 		    status = H5Dset_extent(dset_a[i],newsize2);
 		    space_a[i] = H5Dget_space(dset_a[i]);
 		    status = H5Sselect_hyperslab(space_a[i], H5S_SELECT_SET,
  			(const hsize_t*)offset2,NULL, count2, NULL);
+		    if(format[i].num==1){
+    	    	    	if(format[i].type[0]=='0' || !strcmp(format[i].id,"GT")){ //integer/GT
+	        	    status = H5Dwrite(dset_a[i],fieldtype_a[i], memspace_a[i], space_a[i], H5P_DEFAULT, &intvar[varloc[i]][0][0]);  
+    	    	    	}else if(format[i].type[0]=='1'){ //float
+             		    
+    	    	    	}else if(format[i].type[0]=='3'){ //character
+            		    
+    	    	    	}else if(format[i].type[0]=='4'){ //string
+	    		    
+    	    	    	}
+        	    }else{
+	    		
+		    }
 		    status = H5Sclose(space_a[i]);
 		}
-                status = H5Sclose(space2); 
 	    } 
-	    cout << "\nCall-Chunk" << (i+1)/CHUNKSIZE2_1 << "\n";
+	    cout << "\nCall-Chunk" << (x+1)/CHUNKSIZE2_1 << "\n";
             counter2=0;
         }
         
@@ -1013,8 +993,6 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     status = H5Sclose(memspace1);
     status = H5Pclose(cparms1);
     status= H5Pclose (dataprop1);
-    status = H5Dclose(dset2);
-    status = H5Sclose(memspace2);
     status = H5Pclose(cparms2);
     status= H5Pclose (dataprop2); 
     status = H5Gclose(group);
@@ -1022,8 +1000,6 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     status = H5Gclose(group_sub2);
     free(info);
     free(format);
-    free(call[0]);
-    free(call);	
     free(misc);
     H5Fclose(file);
 
