@@ -8,9 +8,8 @@
 */
  
 /*Field with Number='.' should be represented using string*/
-//Add: may not specify contig IDs
-//use fixed length string for multivalue and string FORMAT fields
 //make a preparser to compute the maximum length for string dataset
+//wrong value saved in string array
 
 #include "hdf5.h"
 #include <stdio.h>
@@ -36,7 +35,8 @@
 #define SIZE4 20
 #define SIZE5 15
 #define SIZE6 10
-#define SIZE7 100
+#define SIZE7 80
+#define SIZE8 25
 
 using namespace std;
 
@@ -346,7 +346,8 @@ int parseInfo(string &linestream,int idx1, int idx2, MISC*& misc, int pos, map<s
 
 unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> ids,queue<int> &tokenidx){
     int temp =0, flags = 0,tokenpos=0;
-    idx1+=3; //skip GT for flag
+    idx1+=3; //skip GT for flagging
+    
     while(idx1<idx2){
         temp = linestream.find_first_of(":\t",idx1+1); 
 	tokenidx.push(tokenpos++); //needed to track FORMAT fields not sorted according to header order
@@ -580,7 +581,7 @@ int getEntryCount(int num,int call){
     return num;
 }
 
-void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&intvar,float ***&floatvar,char ***&charvar,vector<vector<string> > &stringvar,int *&varloc){
+void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&intvar,float ***&floatvar,char ***&charvar,char ****&stringvar,int *&varloc){
     int t1=0,t2=0,t3=0,t4=0;
     varloc = (int*)malloc(formcount*sizeof(int)); //for locating field in the multidim variable
 
@@ -602,7 +603,7 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
     if(t1>0){
 	intvar = (int***)malloc(t1*sizeof(int**));
 	intvar[0] = (int**)malloc(t1*CHUNK*sizeof(int*));
-	intvar[0][0] = (int*)calloc(t1,CHUNK*samcount*sizeof(int));
+	intvar[0][0] = (int*)calloc(t1*CHUNK*samcount,sizeof(int));
 	for (int i = 0; i < t1; i++){
             intvar[i] = intvar[0] + CHUNK*i;
             for (int j = 0; j < CHUNK; j++)
@@ -614,7 +615,7 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
     if(t2>0){
 	floatvar = (float***)malloc(t2*sizeof(float**));
 	floatvar[0] = (float**)malloc(t2*CHUNK*sizeof(float*));
-	floatvar[0][0] = (float*)calloc(t2,CHUNK*samcount*sizeof(float));
+	floatvar[0][0] = (float*)calloc(t2*CHUNK*samcount,sizeof(float));
 	for (int i = 0; i < t2; i++){
             floatvar[i] = floatvar[0] + CHUNK*i;
             for (int j = 0; j < CHUNK; j++)
@@ -626,7 +627,7 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
     if(t3>0){
 	charvar = (char***)malloc(t3*sizeof(char**));
 	charvar[0] = (char**)malloc(t3*CHUNK*sizeof(char*));
-	charvar[0][0] = (char*)calloc(t3,CHUNK*samcount*sizeof(char));
+	charvar[0][0] = (char*)calloc(t3*CHUNK*samcount,sizeof(char));
 	for (int i = 0; i < t3; i++){
             charvar[i] = charvar[0] + CHUNK*i;
             for (int j = 0; j < CHUNK; j++)
@@ -635,11 +636,27 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
             }
     	}
     }
+    if(t4>0){
+	stringvar = (char****)malloc(t4*sizeof(char***));
+	stringvar[0] = (char***)malloc(t4*CHUNK*sizeof(char**));
+	stringvar[0][0] = (char**)calloc(t4,CHUNK*samcount*sizeof(char*));
+        stringvar[0][0][0] = (char*)calloc(t4*CHUNK*samcount*SIZE8,sizeof(char));
+	for (int i = 0; i < t4; i++){
+            stringvar[i] = stringvar[0] + CHUNK*i;
+            for (int j = 0; j < CHUNK; j++)
+            {
+            	stringvar[i][j] = stringvar[0][0] + CHUNK*samcount*i + samcount*j;
+		for(int k = 0; k< samcount;k++){
+		    stringvar[i][j][k] = stringvar[0][0][0] + CHUNK*samcount*SIZE8*i +  CHUNK*samcount*j + SIZE8*k;
+		}
+            }
+    	}
+    }
 
     //STRING
 }
 
-void freeFieldVar(int ***&intvar,float ***&floatvar,char ***&charvar,vector<vector<string> > &stringvar){
+void freeFieldVar(int ***&intvar,float ***&floatvar,char ***&charvar,char ****&stringvar){
     if(intvar!=NULL){
     	free(intvar[0][0]);
     	free(intvar[0]);
@@ -722,32 +739,45 @@ void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigne
     }
 }
 
-void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,vector<vector<string> > &stringvar,int *varloc,int fieldidx,int relidx,int samcount){
+void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,char ****&stringvar,int *varloc,int fieldidx,int relidx,int samcount){
     if(formbit==0){ //Indel/Structural Variants
-
+	for(int x=0;x<samcount;x++){
+	    strcpy(stringvar[varloc[fieldidx]][relidx][x],"X\0"); //No entries
+        }
 	tokenidx.pop();
-    }else if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
-	
+    }else if(formbit&(1<<fieldidx) && token.size()){ //check if n-th bit/field is set
+	int temp=tokenidx.front(); //index of the each FORMAT fields in a sample
+	for(int x=0;x<samcount;x++){
+    	    if(token[x].size()){ cout << temp <<":"<<token[x][temp].c_str() << " | ";
+                token[x][temp]+='\0';
+	    	strcpy(stringvar[varloc[fieldidx]][relidx][x],token[x][temp].c_str()); 
+		cout << stringvar[varloc[fieldidx]][relidx][x];
+		//stringvar[varloc[fieldidx]][relidx][x][token[x][temp].length()] = '\0';
+            }else{
+	    	strcpy(stringvar[varloc[fieldidx]][relidx][x],"X\0"); //No entries
+	    }
+        }
         tokenidx.pop(); 
     }else{ //not a FORMAT field for current SNP
 	
-    }
+    }cout <<"\n";
 }
 
 
 
-void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int samcount,int lastparsepos,vector<char> &callvec,map<string,int> states,META_3 *format,unsigned int formbit,map<string,int> formmap,int ***&intvar,float ***&floatvar,char ***&charvar,vector<vector<string> > &stringvar,int *varloc,queue<int> &tokenidx){
+void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int samcount,int lastparsepos,vector<char> &callvec,map<string,int> states,META_3 *format,unsigned int formbit,map<string,int> formmap,int ***&intvar,float ***&floatvar,char ***&charvar,char ****&stringvar,int *varloc,queue<int> &tokenidx){
     int idx1 = lastparsepos, idx2 = lastparsepos,temp=0,counter=0; 
     int last = linestream.length(), formcount = formmap.size(),gtloc=0;  
     vector<vector<string> > token;
     string callstr;
     
     gtloc = varloc[formmap.find("GT")->second];
-    if(callvec[0]=='X' || callvec[1]=='X' || callvec[0]=='.' || callvec[1]=='.'){ 
+    if(callvec[0]=='X' || callvec[1]=='X' || callvec[0]=='.' || callvec[1]=='.'){ //REF or ALT
        //filter indels, structural variants,'.' calls
  	for(int i=0;i<samcount;i++){
             intvar[gtloc][relidx][i] = 25; //Indels/Incomplete Ref/Alt
         }
+	
 	//FORMAT fields of Indels/Structural Variants
 	for(int i=0;i<formcount;i++){
             if(format[i].num==1){
@@ -762,7 +792,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int sam
 	    	    parseFORMATfield(token,tokenidx,0,stringvar,varloc,i,relidx,samcount);
     	    	}
             }else{
-	     	parseFORMATfield(token,tokenidx,formbit,stringvar,varloc,i,relidx,samcount);
+	     	parseFORMATfield(token,tokenidx,0,stringvar,varloc,i,relidx,samcount);
 	    }
 	}
     }else{ //SNPs
@@ -770,7 +800,7 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int sam
              //get GT where 0-Ref 1..N-Alt
             if(linestream[idx1]=='.' || linestream[idx1+2]=='.'){
                 intvar[gtloc][relidx][counter] = 26; //No entry
-		idx1=linestream.find_first_of(":",idx1)+1; //some with '.' may still have FORMAT values
+		idx1=linestream.find_first_of(":",idx1)-1; //some with '.' (NOT ./.) smay still have FORMAT values
 	
 	    }else{
                 //heterozygous
@@ -826,6 +856,8 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int sam
     	token.clear();
     }
     callvec.clear(); 
+    token.clear();
+    
 }
 
 void setAlleleStates(map<string,int> &Calls){
@@ -928,7 +960,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     float ***floatvar=NULL;
     char ***charvar=NULL;
       //variables to contain parsed fields(multi-value/string type)
-    vector<vector<string> > stringvar; 
+    char **** stringvar=NULL; 
     
     hid_t memtype1,space1,memspace1,dset1,cparms1,dataprop1; //variables for MISC
     hid_t *fieldtype_a, *space_a, *memspace_a,*dset_a,cparms2,dataprop2; //variables for FORMAT field
@@ -1010,7 +1042,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 	    		    
     	    	    	}
         	    }else{
-	    		
+	    		status = H5Dwrite(dset_a[i],fieldtype_a[i], H5S_ALL, H5S_ALL, H5P_DEFAULT, &stringvar[varloc[i]][0][0]); 
 		    }
 	        }
 	    }else{ 
@@ -1043,7 +1075,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 	    		    
     	    	    	}
         	    }else{
-	    		
+	    		status = H5Dwrite(dset_a[i],fieldtype_a[i], memspace_a[i], space_a[i], H5P_DEFAULT, &stringvar[varloc[i]][0][0]);  
 		    }
 		    status = H5Sclose(space_a[i]); 
 		}
