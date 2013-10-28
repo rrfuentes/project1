@@ -1,5 +1,5 @@
 /*
- *Last Update: Aug. 16, 2013
+ *Last Update: Oct. 28, 2013
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
  *
@@ -7,11 +7,10 @@
  *Maximum of 32 INFO/FORMAT fields
 */
  
-/*Field with Number='.' should be represented using string*/
 //make a preparser to compute the maximum length for string dataset
-//wrong value saved in string array
 
 #include "hdf5.h"
+#include "indexBuilder.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,8 +24,8 @@
 #include <vector>
 #include <math.h>
 
-#define CHUNKSIZE1 5000
-#define CHUNKSIZE2_1 50000
+#define CHUNKSIZE1 5//5000
+#define CHUNKSIZE2_1 5//50000
 #define CHUNKSIZE2_2 3 
 #define SNP_CHUNK_CACHE 104857600//1048576000//268435456 /*250MB*/
 #define SIZE1 20
@@ -888,6 +887,35 @@ void setAlleleStates(map<string,int> &Calls){
     Calls["NN"]=24;
 }
 
+int buildFieldIndex(string datafile,META_3 *format,int formcount,int row,int samcount,string inipath){
+    string varpath,variable,indexfile,varname;
+    vector<uint64_t> dims;
+    FQ::DataType type;
+    FQ::FileFormat model = FQ::FQ_HDF5; 
+    int mpi_len =0, mpi_dim = 0;
+    char binning[]= "precision=2";
+    ibis::gParameters().add(FQ_REPORT_STATISTIC, "false");
+    ibis::gParameters().add("fileManager.maxBytes", "2GB");
+    indexfile = "new";
+    IndexBuilder* indexBuilder = new IndexBuilder(datafile, model, indexfile, 0,"",""); 
+    if (!indexBuilder->isValid()) {
+	cout << "ERROR: Failed to initialize the IndexBuilder object for file.";
+	delete(indexBuilder);
+	return 1;
+    }
+    delete(indexBuilder);
+    varpath = inipath + "/FORMATfields/";
+    for(int i=0;i<formcount;i++){
+        if(format[i].num==1){//only single-value field can be indexed
+            if(!strcmp(format[i].id,"GT") || format[i].type[0]=='3' || format[i].type[0]=='3') continue; //no indexing for GT/char/string
+	    varname = format[i].id;
+            IndexBuilder* indexBuilder = new IndexBuilder(datafile, model, indexfile, 0,"",""); 
+	    indexBuilder->buildIndexes(binning, varpath, varname,mpi_dim, mpi_len);
+	    delete(indexBuilder);
+     	}
+    }
+}
+
 int writeVCF(string inputfile,string varPath, string varName, string datafile){
     const rlim_t STACK_SIZE = 1000*1024*1024; 
     struct rlimit rl;
@@ -1080,14 +1108,17 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 		    status = H5Sclose(space_a[i]); 
 		}
 	    } 
-	    cout << "\nCall-Chunk" << (x+1)/CHUNKSIZE2_1 << counter2 <<"\n";
+	    cout << "\nCall-Chunk" << (x+1)/CHUNKSIZE2_1 <<"\n";
             counter2=0;
         }
         
     }
-     
+    int row = newsize2[0]; //total SNPs
     //load CHROM IDs
     if(contigcount==0){ loadHeader2(file,contig,contigcount,contigmap,gpath1);}
+
+    //build index
+    buildFieldIndex(datafile,format,formcount,row,samcount,inipath);
 
     cout << "Indel/Structural Variant Count:" << indelcount << "\n";
     //free value pointers and variables
