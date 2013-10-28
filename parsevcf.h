@@ -25,9 +25,9 @@
 #include <vector>
 #include <math.h>
 
-#define CHUNKSIZE1 5//5000
-#define CHUNKSIZE2_1 5//50000
-#define CHUNKSIZE2_2 1 
+#define CHUNKSIZE1 5000
+#define CHUNKSIZE2_1 50000
+#define CHUNKSIZE2_2 3 
 #define SNP_CHUNK_CACHE 104857600//1048576000//268435456 /*250MB*/
 #define SIZE1 20
 #define SIZE2 20
@@ -553,12 +553,12 @@ void setH5FORMATfield(hid_t file, hid_t *&fieldtype_a,hid_t *&space_a,hid_t *&me
             	dset_a[i] = H5Dcreate (file, name.c_str(), H5T_NATIVE_CHAR, space_a[i], H5P_DEFAULT, cparms, dataprop);
     	    }else if(format[i].type[0]=='4'){ //string
 	    	fieldtype_a[i]=H5Tcopy(H5T_C_S1);
-                H5Tset_size(fieldtype_a[i],H5T_VARIABLE);
+                H5Tset_size(fieldtype_a[i],SIZE8);
             	dset_a[i] = H5Dcreate (file, name.c_str(), fieldtype_a[i], space_a[i], H5P_DEFAULT, cparms, dataprop);
     	    }
         }else{
 	    fieldtype_a[i]=H5Tcopy(H5T_C_S1);
-            H5Tset_size(fieldtype_a[i],H5T_VARIABLE);
+            H5Tset_size(fieldtype_a[i],SIZE8);
             dset_a[i] = H5Dcreate (file, name.c_str(), fieldtype_a[i], space_a[i], H5P_DEFAULT, cparms, dataprop);
 	}
         memspace_a[i] = H5Dget_space(dset_a[i]);
@@ -639,7 +639,7 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
     if(t4>0){
 	stringvar = (char****)malloc(t4*sizeof(char***));
 	stringvar[0] = (char***)malloc(t4*CHUNK*sizeof(char**));
-	stringvar[0][0] = (char**)calloc(t4,CHUNK*samcount*sizeof(char*));
+	stringvar[0][0] = (char**)malloc(t4*CHUNK*samcount*sizeof(char*));
         stringvar[0][0][0] = (char*)calloc(t4*CHUNK*samcount*SIZE8,sizeof(char));
 	for (int i = 0; i < t4; i++){
             stringvar[i] = stringvar[0] + CHUNK*i;
@@ -647,7 +647,7 @@ void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&i
             {
             	stringvar[i][j] = stringvar[0][0] + CHUNK*samcount*i + samcount*j;
 		for(int k = 0; k< samcount;k++){
-		    stringvar[i][j][k] = stringvar[0][0][0] + CHUNK*samcount*SIZE8*i +  CHUNK*samcount*j + SIZE8*k;
+		    stringvar[i][j][k] = stringvar[0][0][0] + CHUNK*samcount*SIZE8*i +  samcount*j*SIZE8 + SIZE8*k;
 		}
             }
     	}
@@ -672,7 +672,12 @@ void freeFieldVar(int ***&intvar,float ***&floatvar,char ***&charvar,char ****&s
     	free(charvar[0]);
     	free(charvar);
     }
-    
+    if(stringvar!=NULL){
+    	free(stringvar[0][0][0]);
+    	free(stringvar[0][0]);
+    	free(stringvar[0]);
+        free(stringvar);
+    }
 
 }
 
@@ -691,21 +696,17 @@ void closeIden(hid_t *&fieldtype_a,hid_t *&space_a,hid_t *&memspace_a,hid_t *&ds
 }
 
 void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,int ***&intvar,int *varloc,int fieldidx,int relidx,int samcount){
-    if(formbit==0){ //Indel/Structural Variants
-	int temp=tokenidx.front(); 
-	for(int x=0;x<samcount;x++){
-	    intvar[varloc[fieldidx]][relidx][x] = -1;
-        }
-	tokenidx.pop();
-    }else if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
+    if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
         int temp=tokenidx.front(); //index of the each FORMAT fields in a sample
-	for(int x=0;x<samcount;x++){
-    	    if(token[x].size()){ 
+	if(!token.empty()){
+	    for(int x=0;x<samcount;x++){
 	    	intvar[varloc[fieldidx]][relidx][x] = (strcmp(token[x][temp].c_str(),"."))?atoi(token[x][temp].c_str()):-1; //-1 no value 
-            }else{
-	    	intvar[varloc[fieldidx]][relidx][x] = -2; //-2 indels/structural variants;
-	    }
-        }
+            }
+	}else{
+	    for(int x=0;x<samcount;x++){
+	    	intvar[varloc[fieldidx]][relidx][x] = -2; //indels/structural variants
+            }
+	}
 	tokenidx.pop();
     }else{ //not a FORMAT field for current SNP
 	for(int x=0;x<samcount;x++){
@@ -716,51 +717,66 @@ void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigne
 }
 
 void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,float ***&floatvar,int *varloc,int fieldidx,int relidx,int samcount){
-    if(formbit==0){ //Indel/Structural Variants
-	
+    if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
+        int temp=tokenidx.front(); //index of the each FORMAT fields in a sample
+	if(!token.empty()){
+	    for(int x=0;x<samcount;x++){
+	    	floatvar[varloc[fieldidx]][relidx][x] = (strcmp(token[x][temp].c_str(),"."))?atof(token[x][temp].c_str()):-1; //-1 no value 
+            }
+	}else{
+	    for(int x=0;x<samcount;x++){
+	    	floatvar[varloc[fieldidx]][relidx][x] = -2; //indels/structural variants
+            }
+	}
 	tokenidx.pop();
-    }else if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
-	
-        tokenidx.pop(); 
     }else{ //not a FORMAT field for current SNP
-	
-    }
+	for(int x=0;x<samcount;x++){
+	    floatvar[varloc[fieldidx]][relidx][x] = -3; //-3 not a field
+        }
+    } 
 }
 
 void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,char ***&charvar,int *varloc,int fieldidx,int relidx,int samcount){
-    if(formbit==0){ //Indel/Structural Variants
-
+    if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
+        int temp=tokenidx.front(); //index of the each FORMAT fields in a sample
+	if(!token.empty()){
+	    for(int x=0;x<samcount;x++){
+	    	charvar[varloc[fieldidx]][relidx][x] = (!token[x][temp].empty())?token[x][temp][0]:'.'; //-1 no value 
+            }
+	}else{
+	    for(int x=0;x<samcount;x++){
+	    	charvar[varloc[fieldidx]][relidx][x] = '.'; //indels/structural variants
+            }
+	}
 	tokenidx.pop();
-    }else if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
-	
-        tokenidx.pop(); 
     }else{ //not a FORMAT field for current SNP
-	
-    }
+	for(int x=0;x<samcount;x++){
+	    charvar[varloc[fieldidx]][relidx][x] = 'X'; //-3 not a field
+        }
+    } 
 }
 
-void parseFORMATfield(vector<vector<string> > token,queue<int> &tokenidx,unsigned int formbit,char ****&stringvar,int *varloc,int fieldidx,int relidx,int samcount){
-    if(formbit==0){ //Indel/Structural Variants
-	for(int x=0;x<samcount;x++){
-	    strcpy(stringvar[varloc[fieldidx]][relidx][x],"X\0"); //No entries
-        }
-	tokenidx.pop();
-    }else if(formbit&(1<<fieldidx) && token.size()){ //check if n-th bit/field is set
+void parseFORMATfield(vector<vector<string> > &token,queue<int> &tokenidx,unsigned int formbit,char ****&stringvar,int *varloc,int fieldidx,int relidx,int samcount){
+   if(formbit&(1<<fieldidx)){ //check if n-th bit/field is set
 	int temp=tokenidx.front(); //index of the each FORMAT fields in a sample
-	for(int x=0;x<samcount;x++){
-    	    if(token[x].size()){ cout << temp <<":"<<token[x][temp].c_str() << " | ";
-                token[x][temp]+='\0';
+	if(!token.empty()){ 
+	    for(int x=0;x<samcount;x++){
+            	token[x][temp]+="\0";
 	    	strcpy(stringvar[varloc[fieldidx]][relidx][x],token[x][temp].c_str()); 
-		cout << stringvar[varloc[fieldidx]][relidx][x];
+		//cout << stringvar[varloc[fieldidx]][relidx][x];
 		//stringvar[varloc[fieldidx]][relidx][x][token[x][temp].length()] = '\0';
-            }else{
-	    	strcpy(stringvar[varloc[fieldidx]][relidx][x],"X\0"); //No entries
-	    }
-        }
+            }
+	}else{ //No entries
+	    for(int x=0;x<samcount;x++){
+	    	strcpy(stringvar[varloc[fieldidx]][relidx][x],".\0"); 
+            }
+	}
         tokenidx.pop(); 
     }else{ //not a FORMAT field for current SNP
-	
-    }cout <<"\n";
+	for(int x=0;x<samcount;x++){
+	    	strcpy(stringvar[varloc[fieldidx]][relidx][x],".\0"); 
+        }
+    }
 }
 
 
@@ -777,24 +793,6 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int sam
  	for(int i=0;i<samcount;i++){
             intvar[gtloc][relidx][i] = 25; //Indels/Incomplete Ref/Alt
         }
-	
-	//FORMAT fields of Indels/Structural Variants
-	for(int i=0;i<formcount;i++){
-            if(format[i].num==1){
-                if(!strcmp(format[i].id,"GT")) continue; //already parsed
-    	    	if(format[i].type[0]=='0'){ //integer
-	            parseFORMATfield(token,tokenidx,0,intvar,varloc,i,relidx,samcount);
-    	    	}else if(format[i].type[0]=='1'){ //float
-             	    parseFORMATfield(token,tokenidx,0,floatvar,varloc,i,relidx,samcount);
-    	    	}else if(format[i].type[0]=='3'){ //character
-            	    parseFORMATfield(token,tokenidx,0,charvar,varloc,i,relidx,samcount);
-    	    	}else if(format[i].type[0]=='4'){ //string
-	    	    parseFORMATfield(token,tokenidx,0,stringvar,varloc,i,relidx,samcount);
-    	    	}
-            }else{
-	     	parseFORMATfield(token,tokenidx,0,stringvar,varloc,i,relidx,samcount);
-	    }
-	}
     }else{ //SNPs
 	while(idx1<last){ 
              //get GT where 0-Ref 1..N-Alt
@@ -832,28 +830,30 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int sam
             counter++; 
     	}
 
-        //store FORMAT fields
-	for(int i=0;i<formcount;i++){
-            if(format[i].num==1){
-                if(!strcmp(format[i].id,"GT")) continue; //already parsed
-    	    	if(format[i].type[0]=='0'){ //integer
-	            parseFORMATfield(token,tokenidx,formbit,intvar,varloc,i,relidx,samcount);
-    	    	}else if(format[i].type[0]=='1'){ //float
-             	    parseFORMATfield(token,tokenidx,formbit,floatvar,varloc,i,relidx,samcount);
-    	    	}else if(format[i].type[0]=='3'){ //character
-            	    parseFORMATfield(token,tokenidx,formbit,charvar,varloc,i,relidx,samcount);
-    	    	}else if(format[i].type[0]=='4'){ //string
-	    	    parseFORMATfield(token,tokenidx,formbit,stringvar,varloc,i,relidx,samcount);
-    	    	}
-            }else{
+        
+    }
+
+    //store FORMAT fields
+    for(int i=0;i<formcount;i++){
+    	if(format[i].num==1){
+            if(!strcmp(format[i].id,"GT")) continue; //already parsed
+    	    if(format[i].type[0]=='0'){ //integer
+	    	parseFORMATfield(token,tokenidx,formbit,intvar,varloc,i,relidx,samcount);
+    	    }else if(format[i].type[0]=='1'){ //float
+             	parseFORMATfield(token,tokenidx,formbit,floatvar,varloc,i,relidx,samcount);
+    	    }else if(format[i].type[0]=='3'){ //character
+            	parseFORMATfield(token,tokenidx,formbit,charvar,varloc,i,relidx,samcount);
+    	    }else if(format[i].type[0]=='4'){ //string
+	    	parseFORMATfield(token,tokenidx,formbit,stringvar,varloc,i,relidx,samcount);
+    	    }
+     	}else{
 	     	parseFORMATfield(token,tokenidx,formbit,stringvar,varloc,i,relidx,samcount);
-	    }
 	}
+    }
     	
-    	//free
+    if(!token.empty()){	//free
     	for(int x=0;x<samcount;x++)
 	   token[x].clear();
-    	token.clear();
     }
     callvec.clear(); 
     token.clear();
@@ -1042,7 +1042,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 	    		    
     	    	    	}
         	    }else{
-	    		status = H5Dwrite(dset_a[i],fieldtype_a[i], H5S_ALL, H5S_ALL, H5P_DEFAULT, &stringvar[varloc[i]][0][0]); 
+	    		status = H5Dwrite(dset_a[i],fieldtype_a[i], H5S_ALL, H5S_ALL, H5P_DEFAULT, stringvar[varloc[i]][0][0]); 
 		    }
 	        }
 	    }else{ 
@@ -1075,7 +1075,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 	    		    
     	    	    	}
         	    }else{
-	    		status = H5Dwrite(dset_a[i],fieldtype_a[i], memspace_a[i], space_a[i], H5P_DEFAULT, &stringvar[varloc[i]][0][0]);  
+	    		status = H5Dwrite(dset_a[i],fieldtype_a[i], memspace_a[i], space_a[i], H5P_DEFAULT, stringvar[varloc[i]][0][0]);  
 		    }
 		    status = H5Sclose(space_a[i]); 
 		}
