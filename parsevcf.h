@@ -892,25 +892,25 @@ int buildFieldIndex(string datafile,META_3 *format,int formcount,int row,int sam
     vector<uint64_t> dims;
     FQ::DataType type;
     FQ::FileFormat model = FQ::FQ_HDF5; 
-    int mpi_len =0, mpi_dim = 0;
+    
     char binning[]= "precision=2";
     ibis::gParameters().add(FQ_REPORT_STATISTIC, "false");
     ibis::gParameters().add("fileManager.maxBytes", "2GB");
-    indexfile = "new";
+    
     IndexBuilder* indexBuilder = new IndexBuilder(datafile, model, indexfile, 0,"",""); 
     if (!indexBuilder->isValid()) {
-	cout << "ERROR: Failed to initialize the IndexBuilder object for file.";
+	cout << "ERROR: Failed to initialize the IndexBuilder object for file.\n";
 	delete(indexBuilder);
 	return 1;
     }
     delete(indexBuilder);
-    varpath = inipath + "/FORMATfields/";
+    varpath = inipath + "/FORMATfields";
     for(int i=0;i<formcount;i++){
         if(format[i].num==1){//only single-value field can be indexed
             if(!strcmp(format[i].id,"GT") || format[i].type[0]=='3' || format[i].type[0]=='3') continue; //no indexing for GT/char/string
 	    varname = format[i].id;
-            IndexBuilder* indexBuilder = new IndexBuilder(datafile, model, indexfile, 0,"",""); 
-	    indexBuilder->buildIndexes(binning, varpath, varname,mpi_dim, mpi_len);
+            IndexBuilder* indexBuilder = new IndexBuilder(datafile, model, indexfile,0,"",""); 
+	    indexBuilder->buildIndexes(binning, varpath, varname.c_str());
 	    delete(indexBuilder);
      	}
     }
@@ -1117,9 +1117,6 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     //load CHROM IDs
     if(contigcount==0){ loadHeader2(file,contig,contigcount,contigmap,gpath1);}
 
-    //build index
-    buildFieldIndex(datafile,format,formcount,row,samcount,inipath);
-
     cout << "Indel/Structural Variant Count:" << indelcount << "\n";
     //free value pointers and variables
     contigmap.clear(); 
@@ -1136,12 +1133,17 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     status = H5Gclose(group);
     status = H5Gclose(group_sub1);
     status = H5Gclose(group_sub2);
+    freeFieldVar(intvar,floatvar,charvar,stringvar);
+    closeIden(fieldtype_a,space_a,memspace_a,dset_a,formcount);
+    H5Fclose(file); //close file
+
+    //build index
+    buildFieldIndex(datafile,format,formcount,row,samcount,inipath);
     free(info);
     free(format);
     free(misc);
-    freeFieldVar(intvar,floatvar,charvar,stringvar);
-    closeIden(fieldtype_a,space_a,memspace_a,dset_a,formcount);
+    
     free(varloc);
-    H5Fclose(file);
+    
     return 0;
 }
