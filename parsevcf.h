@@ -892,7 +892,7 @@ int buildFieldIndex(string datafile,META_3 *format,int formcount,int row,int sam
     vector<uint64_t> dims;
     FQ::DataType type;
     FQ::FileFormat model = FQ::FQ_HDF5; 
-    
+    indexfile = datafile+".index";
     char binning[]= "precision=2";
     ibis::gParameters().add(FQ_REPORT_STATISTIC, "false");
     ibis::gParameters().add("fileManager.maxBytes", "2GB");

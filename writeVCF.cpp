@@ -13,7 +13,7 @@
 
 #include "parsevcf.h"
 
-static const char *options="f:F:p:P:n:N:i:I:c:C:r:R:";
+static const char *options="f:F:p:P:n:N:i:I:";
 
 static string datafile;
 static string inputfile;
