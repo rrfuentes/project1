@@ -334,7 +334,7 @@ int getMeta(string datafile,string path,FILE *output){
     for(int i=0;i<dims[0];i++){
 	temp = strtok(data[i].value,";");
         if(temp==NULL){
-	    fprintf(output,"##%s=%s",data[i].field,data[i].value);
+	    fprintf(output,"##%s=%s\n",data[i].field,data[i].value);
         }else{  //multiple entries (e.g. FILTER)
 	    while(temp!=NULL){
 		fprintf(output,"##%s=%s\n",data[i].field,temp);
@@ -352,7 +352,7 @@ int getMeta(string datafile,string path,FILE *output){
     return 0;
 }
 
-int getINFOFORMAT(string datafile,string path,string *&format,FILE *output,bool flag){
+int getINFOFORMAT(string datafile,string path,vector<string> &vec,FILE *output,bool flag){
     META_3 *data;
     hid_t file,dset,space,type;
     herr_t status;
@@ -374,14 +374,19 @@ int getINFOFORMAT(string datafile,string path,string *&format,FILE *output,bool 
     status = H5Dread(dset,type,H5S_ALL,H5S_ALL,H5P_DEFAULT,data);
 
     for(int i=0;i<dims[0];i++){
-	if(flag) fprintf(output,"##FORMAT=<ID=%s,",data[i].id);
-        else fprintf(output,"##INFO=<ID=%s,",data[i].id);
+	if(flag){
+	    fprintf(output,"##FORMAT=<ID=%s,",data[i].id);
+	    vec.push_back(data[i].id);
+        }else{
+ 	    fprintf(output,"##INFO=<ID=%s,",data[i].id);
+            vec.push_back(data[i].id);
+	}
 
         if(data[i].num==-1) fprintf(output,"Number=A,");
     	else if(data[i].num==-2) fprintf(output,"Number=G,");
     	else if(data[i].num==-3) fprintf(output,"Number=.,");
     	else fprintf(output,"Number=%d,",data[i].num);
-        fprintf(output,"Type=%s,Description=%s>\n",data[i].type,data[i].desc);
+        fprintf(output,"Type=%s,Description=\"%s\">\n",data[i].type,data[i].desc);
     }
 
     //close identifiers and free resources
@@ -392,20 +397,90 @@ int getINFOFORMAT(string datafile,string path,string *&format,FILE *output,bool 
     return 0;
 }
 
-int writeHeader(string datafile,string path,FILE *output){
-    string *format,*info;
+int getContigs(string datafile,string path,vector<string> &vec,FILE *output){
+    META_2 *data;
+    hid_t file,dset,space,type;
+    herr_t status;
+    hsize_t dims[1] = {0};
+    int ndims;
+
+    path += "/meta/contigs";
+    //Open file and dataset
+    file = H5Fopen(datafile.c_str(),H5F_ACC_RDONLY,H5P_DEFAULT); 
+    dset = H5Dopen(file,path.c_str(),H5P_DEFAULT); 
+
+    //get dataspace and allocate memory for read buffer
+    space = H5Dget_space(dset);
+    type = H5Dget_type(dset);
+    ndims = H5Sget_simple_extent_dims(space,dims,NULL);
+    data = (META_2*)malloc(dims[0]*sizeof(META_2));
+    
+    status = H5Dread(dset,type,H5S_ALL,H5S_ALL,H5P_DEFAULT,data);
+
+    for(int i=0;i<dims[0];i++){
+	fprintf(output,"##contig=<ID=%s,length=%d>\n",data[i].id,data[i].len);
+    }
+
+    //close identifiers and free resources
+    status = H5Dclose(dset);
+    status = H5Sclose(space);
+    status = H5Fclose(file);
+    free(data);
+    return 0;
+}
+
+int getSampleNames(string datafile,string path,FILE *output){
+    hid_t file,dset,space,type;
+    herr_t status;
+    hsize_t dims[1] = {0};
+    int ndims;
+    char** samples=NULL;
+
+    path += "/samples";
+    //Open file and dataset
+    file = H5Fopen(datafile.c_str(),H5F_ACC_RDONLY,H5P_DEFAULT); 
+    dset = H5Dopen(file,path.c_str(),H5P_DEFAULT); 
+
+    //get dataspace and allocate memory for read buffer
+    space = H5Dget_space(dset);
+    type = H5Dget_type(dset);
+    ndims = H5Sget_simple_extent_dims(space,dims,NULL);
+    
+    samples = (char**)malloc(dims[0]*sizeof(char*));
+    samples[0] = (char*)malloc(dims[0]*SIZE3*sizeof(char));
+    for(int i=0;i<dims[0];i++){ samples[i]=samples[0]+i*SIZE3;}
+	
+    status = H5Dread(dset,type,H5S_ALL,H5S_ALL,H5P_DEFAULT,samples[0]);
+    cout << dims[0];
+    fprintf(output,"CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
+    for(int i=0;i<dims[0];i++){
+	fprintf(output,"\t%s",samples[i]);
+    }
+
+    //close identifiers and free resources
+    status = H5Dclose(dset);
+    status = H5Sclose(space);
+    status = H5Fclose(file);
+    free(samples[0]);
+    free(samples);
+    return 0;
+}
+
+int writeHeader(string datafile,string path,vector<string> &format,vector<string> &info, vector<string> &contigs,FILE *output){
     getMeta(datafile,path,output);
     getINFOFORMAT(datafile,path,format,output,1); //FORMAT
     getINFOFORMAT(datafile,path,info,output,0); //INFO
-    
+    getContigs(datafile,path,contigs,output); //Contigs
+    getSampleNames(datafile,path,output); //Sample Names
 }
 
 int fetchData(string datafile,string fileformat,string sample,string snpbound,string varname, string varpath, map<int,string> Calls,string outfile){
     FILE *output;
-    ibis::horometer timer1,timer2;
+    ibis::horometer timer1;
     timer1.start(); 
     vector<int> col,row; //bounds
-    int idx,size1=1,size2=1; //default is 1	
+    vector<string> format,info,contigs;
+    int idx,size1=1,size2=1,QUERY_CHUNK=3000; //default is 1	
     char **samnames;
     char **CHROM1=NULL; //Hapmap Chroms
     int *CHROM2=NULL; //VCF Chrom indexes
@@ -499,80 +574,83 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
  	printf("ERROR: Failed to get the information for variable.\n");
 	return 1;
     }else {
-	
-
-        if(fetch){ //CHROM\tPOS\tGT
-	    outfile += ".txt";
-	    output = fopen(outfile.c_str(),"w");
-		//get sample name/s, CHROMs,POSs
-            if(getSampleNames(datafile,varpath,samnames,col[0],size2)) return 1;
-     	    if(!fileformat.compare("vcf") && getContigsHeader(datafile,varpath,CONTIGS)) return 1; //only for vcf
-    	    if(!fileformat.compare("hapmap") && getCHROM(datafile,varpath,CHROM1,row[0],size1)) return 1;
-    	    if(!fileformat.compare("vcf") && getCHROM(datafile,varpath,CHROM2,row[0],size1)) return 1;
-    	    if(getPOS(datafile,varpath,POS,row[0],size1)) return 1;
-	}else{  //MISC\tGT
-	    outfile += ".vcf";
-   	    output = fopen(outfile.c_str(),"w");
-	    writeHeader(datafile,varpath,output); 	
-	}
-
-        //TO DO: check the 1st and last storage index of bounds within chromX
+	 //TO DO: check the 1st and last storage index of bounds within chromX
         // CHROM=q_chrom && pos<row[1]
+        int block=0,tempsize=QUERY_CHUNK;
+	size1=(size1==1)?dims[0]:size1; //assigned all rows if no range is specified
+        block=size1/QUERY_CHUNK; 
+	if(size1%QUERY_CHUNK) block++; //another block for remainders
+           	
+        for(int x=0;x<block;x++){ //block fetching to avoid memory overload
+            //do the fetch and write here
+            if(x+1==block && size1%QUERY_CHUNK>0) tempsize=size1%QUERY_CHUNK;
 
-	if(size1>1){ //set row range
-	    paramtemp<< dataname <<"["<<row[0]<<":"<<row[1]+1<< ",";
-	}else{
-	    paramtemp<< dataname <<"[,";
-            size1=dims[0];
-	}
+            row[0]+=x*tempsize;
+	    row[1]=row[0]+tempsize; //exclusive y in x:y
+            paramtemp<< dataname <<"["<<row[0]<<":"<<row[1]<< ",";
+            cout << block << " " << size1 << " " << tempsize;
+	    if(size2==1){ //single sample
+	    	data = (int*)malloc(tempsize*sizeof(int)); 
+	    	paramtemp << col[0] << "]";
+	    }else{ //multiple sample
+	    	data = (int*)malloc(tempsize*size2*sizeof(int));
+	    	paramtemp << col[0] << ":" << col[1]+1 << "]"; //exclusive y in x:y
+	    }
+	    param = paramtemp.str();
+	    fq->getData(param,data); 
 
-	if(size2==1){ //set sample range
-	    data = (int*)malloc(size1*sizeof(int)); 
-	    paramtemp << col[0] << "]";
-	}else{
-	    data = (int*)malloc(size1*size2*sizeof(int));
-	    paramtemp << col[0] << ":" << col[1]+1 << "]"; //exclusive y in x-y
+	    if(fetch){ //CHROM\tPOS\tGT
+	    	outfile += ".txt";
+	    	output = fopen(outfile.c_str(),"w");
+		//get sample name/s, CHROMs,POSs
+               	if(getSampleNames(datafile,varpath,samnames,col[0],size2)) return 1;
+     	    	if(!fileformat.compare("vcf") && getContigsHeader(datafile,varpath,CONTIGS)) return 1; //only for vcf
+    	    	if(!fileformat.compare("hapmap") && getCHROM(datafile,varpath,CHROM1,row[0],size1)) return 1;
+    	    	if(!fileformat.compare("vcf") && getCHROM(datafile,varpath,CHROM2,row[0],size1)) return 1;
+    	    	if(getPOS(datafile,varpath,POS,row[0],size1)) return 1;
+
+            	if(!fileformat.compare("vcf")){ //print VCF
+            	    fprintf(output,"CHROM\tPOS\t");
+    	    	    for(int i=0;i<size2;i++) fprintf(output,"%s\t",samnames[i]); //print sample names
+    	    	    fprintf(output,"\n");
+    	   	    for(int i=0;i<size1;i++){
+	    	     	fprintf(output,"%s\t%d\t",CONTIGS.find(CHROM2[i])->second.c_str(),POS[i]);
+	    	    	for(int j=0;j<size2;j++){
+	    	    	    fprintf(output,"%s\t",Calls[data[i*size2+j]].c_str()); //print GT
+	     	    	}
+	            	fprintf(output,"\n");
+    	    	    }
+    	    	}else{ //print hapmap
+	    	    fprintf(output,"CHROM\tPOS\t");
+    	    	    for(int i=0;i<size2;i++) fprintf(output,"%s\t",samnames[i]); //print sample names
+    	    	    fprintf(output,"\n");
+    	    	    for(int i=0;i<size1;i++){
+	    	    	fprintf(output,"%s\t%d\t",CHROM1[i],POS[i]);
+	    	    	for(int j=0;j<size2;j++){
+	    	    	    fprintf(output,"%s\t",Calls[data[i*size2+j]].c_str()); //print GT
+	    	     	}
+	                fprintf(output,"\n");
+    	    	    }
+    	       	}
+	    }else{  //MISC\tGT
+	    	if(!fileformat.compare("vcf")){ outfile += ".vcf";
+            	}else{ outfile += ".txt";}
+
+   	    	output = fopen(outfile.c_str(),"w");
+	    	if(!fileformat.compare("vcf")){ 
+		    writeHeader(datafile,varpath,format,info,contigs,output); //write Header
+	    	}else{
+
+            	}
+	    }
 	}
-	param = paramtemp.str();
-	fq->getData(param,data); 
+   
     }
 
-     timer1.stop();
-     printf("REPORT: Successfully queried data.\n Total time elapsed:%f\n", timer1.realTime());
-     timer2.start(); 
-    //write to file
-    if(fetch){ //CHROM\tPOS\tGT
-    	if(!fileformat.compare("vcf")){ //print VCF
-            fprintf(output,"CHROM\tPOS\t");
-    	    for(int i=0;i<size2;i++) fprintf(output,"%s\t",samnames[i]); //print sample names
-    	    fprintf(output,"\n");
-    	    for(int i=0;i<size1;i++){
-	    	fprintf(output,"%s\t%d\t",CONTIGS.find(CHROM2[i])->second.c_str(),POS[i]);
-	    	for(int j=0;j<size2;j++){
-	    	    fprintf(output,"%s\t",Calls[data[i*size2+j]].c_str()); //print GT
-	     	}
-	        fprintf(output,"\n");
-    	    }
-    	}else{ //print hapmap
-	    fprintf(output,"CHROM\tPOS\t");
-    	    for(int i=0;i<size2;i++) fprintf(output,"%s\t",samnames[i]); //print sample names
-    	    fprintf(output,"\n");
-    	    for(int i=0;i<size1;i++){
-	    	fprintf(output,"%s\t%d\t",CHROM1[i],POS[i]);
-	    	for(int j=0;j<size2;j++){
-	    	    fprintf(output,"%s\t",Calls[data[i*size2+j]].c_str()); //print GT
-	    	}
-	        fprintf(output,"\n");
-    	    }
-    	}
-    }else{ //Original format
+    timer1.stop();
+    printf("REPORT: Successfully queried data.\n Total time elapsed:%f\n", timer1.realTime());
 
-    }
-
-    timer2.stop(); 
-    printf("REPORT: Successfully written data to file.\n Total time elapsed:%f\n", timer2.realTime());
-
-    if(CHROM1!=NULL){
+    /*if(CHROM1!=NULL){
 	free(CHROM1[0]);
 	free(CHROM1);
     }else{
@@ -584,8 +662,13 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
        free(samnames[0]);
        free(samnames);
        free(data);
+    }else{
+       format.clear();
+       info.clear();
+       contigs.clear();
     }
-    fclose(output);
+    fclose(output);*/
+    delete(fq);
 }
 
 int main(int argc, char **argv) {

@@ -291,11 +291,11 @@ int loadSampleNames(hid_t file,string linestream, string inipath){
     
     ostringstream tempname;
     for(x=0;x<samplesize;x++){ 
-        tempname << "Sample" << x;
+        //tempname << "Sample" << x; //rename    
 	samples[x]=samples[0]+x*SIZE3;
-        //strcpy(samples[x],temp[x].c_str());
-	strcpy(samples[x],tempname.str().c_str());
-        tempname.str("");
+        strcpy(samples[x],temp[x].c_str());
+	//strcpy(samples[x],tempname.str().c_str());
+        //tempname.str("");
     } 
     count=x;
     
