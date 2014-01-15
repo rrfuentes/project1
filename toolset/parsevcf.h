@@ -1,5 +1,5 @@
 /*
- *Last Update: Jan. 13, 2014
+ *Last Update: Jan. 15, 2014
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
  *
