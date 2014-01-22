@@ -1,5 +1,5 @@
 /*
- *Last Update: Jan. 15, 2013
+ *Last Update: Jan. 22, 2013
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
  *
@@ -9,6 +9,7 @@
 #include "parsevcf.h"
 #include "queryProcessor.h"
 #include "hdf5file.h"
+#include "hdf5.h"
 #include <iostream>
 #include <stdlib.h>
 #include <iomanip>
@@ -268,48 +269,6 @@ int getPOS(string datafile,string path,int *&POS,int idx1,int num){
     return 0;
 }
 
-int getContigsHeader(string datafile,string path,vector<string> &contigs){
-    hid_t file,dset,space,fieldtype,stringtype;
-    herr_t status;
-    hsize_t dims[1] = {0};
-    int ndims; //number of dimensions 
-    char **id;  
-
-    path += "/meta/contigs";
-    //Open file and dataset
-    file = H5Fopen(datafile.c_str(),H5F_ACC_RDONLY,H5P_DEFAULT); 
-    dset = H5Dopen(file,path.c_str(),H5P_DEFAULT); 
-    //create datatype for CONTIGS header
-    stringtype = H5Tcopy(H5T_C_S1);
-    status = H5Tset_size(stringtype,20);
-    fieldtype = H5Tcreate(H5T_COMPOUND,sizeof(char)*20);
-    status = H5Tinsert(fieldtype,"id",0,stringtype);
-    
-    //get dset space
-    space = H5Dget_space(dset);
-    ndims = H5Sget_simple_extent_dims(space,dims,NULL);
-
-    //allocate space for buffer
-    id = (char**)malloc(dims[0]*sizeof(char*));
-    id[0] = (char*)malloc(dims[0]*20*sizeof(char));
-    for(int i=0;i<dims[0];i++) id[i] = id[0] + i*20; 
-    //read field
-    status = H5Dread(dset,fieldtype,H5S_ALL,H5S_ALL,H5P_DEFAULT,id[0]);
-    //save IDs to map
-    for(int i=0;i<dims[0];i++){
-	contigs.push_back(id[i]);
-    }
-    //close identifiers and free resources
-    free(id[0]);
-    free(id);
-    status = H5Dclose(dset);
-    status = H5Sclose(space);
-    status = H5Tclose(fieldtype);
-    status = H5Tclose(stringtype);
-    status = H5Fclose(file);
-    return 0;
-}
-
 int getMeta(string datafile,string path,FILE *output){
     META_1 *data;
     hid_t file,dset,space,type;
@@ -397,7 +356,7 @@ int getINFOFORMAT(string datafile,string path,vector<string> &vec,FILE *output,b
     return 0;
 }
 
-int getContigs(string datafile,string path,vector<string> &vec,FILE *output){
+int getContigs(string datafile,string path,vector<string> &contigs,FILE *output,int vcf){
     META_2 *data;
     hid_t file,dset,space,type;
     herr_t status;
@@ -418,7 +377,8 @@ int getContigs(string datafile,string path,vector<string> &vec,FILE *output){
     status = H5Dread(dset,type,H5S_ALL,H5S_ALL,H5P_DEFAULT,data);
 
     for(int i=0;i<dims[0];i++){
-	fprintf(output,"##contig=<ID=%s,length=%d>\n",data[i].id,data[i].len);
+	if(vcf)fprintf(output,"##contig=<ID=%s,length=%d>\n",data[i].id,data[i].len);
+	contigs.push_back(data[i].id);
     }
 
     //close identifiers and free resources
@@ -470,37 +430,32 @@ int writeHeader(string datafile,string path,vector<string> &format,vector<string
     getMeta(datafile,path,output);
     getINFOFORMAT(datafile,path,format,output,1); //FORMAT
     getINFOFORMAT(datafile,path,info,output,0); //INFO
-    getContigs(datafile,path,contigs,output); //Contigs
+    getContigs(datafile,path,contigs,output,1); //Contigs
     getSampleNames(datafile,path,output); //Sample Names
 }
 
 int getMISC(string datafile,string path,vector<string> format,vector<string> info,vector<string> contigs,int row,int size,FILE *output){
     MISC *data;
-    hid_t file,dset,memspace,space,type;
+    hid_t file,dset,space,type,dapl;
     herr_t status;
-    hsize_t dims[1] = {0};
-    int ndims;
-    hssize_t offset[1]={row};
+    hsize_t offset[1]={row};
     hsize_t count[1]={size};
-    cout << "hey";
-    path += "/meta/meta";
+    cout << path<< " "<<offset[0] <<" " << count[0] << " " << size;
+    path += "/misc";
     //Open file and dataset
     file = H5Fopen(datafile.c_str(),H5F_ACC_RDONLY,H5P_DEFAULT); 
     dset = H5Dopen(file,path.c_str(),H5P_DEFAULT); 
 
-    //get dataspace and allocate memory for read buffer
-    memspace = H5Screate_simple (1, count, NULL); 
+    //get dataspace and allocate memory for read buffer 
     space = H5Dget_space(dset);
     type = H5Dget_type(dset);
-    //ndims = H5Sget_simple_extent_dims(space,dims,NULL);=
-    status = H5Sselect_hyperslab(space, H5S_SELECT_SET,
- 			(const hsize_t*)offset,NULL, count, NULL);
+    status = H5Sselect_hyperslab(space, H5S_SELECT_AND,offset,NULL,count,NULL);
     data = (MISC*)malloc(size*sizeof(MISC));
     
-    status = H5Dread(dset,type,memspace,space,H5P_DEFAULT,data);
+    status = H5Dread(dset,type,H5S_ALL,space,H5P_DEFAULT,data);
 
-    for(int i=0;i<dims[0];i++){
-	    fprintf(output,"##%s\n",contigs[data[i].chrom].c_str());
+    for(int i=0;i<size;i++){
+	fprintf(output,"\n%s\t%d\t%s\t%c\t%s\t%.2f\t%s\t",contigs[data[i].chrom].c_str(),data[i].pos,data[i].id,data[i].ref,data[i].alt,data[i].qual,data[i].filter);
     }
 
     //close identifiers and free resources
@@ -618,15 +573,15 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
 	if(size1%QUERY_CHUNK) block++; //another block for remainders
         if(fetch){
 	    outfile += ".txt";
-	    output = fopen(outfile.c_str(),"w");
-	    if(!fileformat.compare("vcf") && getContigsHeader(datafile,varpath,contigs)){ 
+	    if(!fileformat.compare("vcf") && getContigs(datafile,varpath,contigs,output,0)){ 
 		printf("ERROR: Cannot fetch CONTIGS list.");
 		return 1; //only for vcf
 	    }
 	}else{
-	    if(!fileformat.compare("vcf")){ outfile += ".vcf";
-            }else{ outfile += ".txt";}
+	    if(!fileformat.compare("vcf")) outfile += ".vcf";
+            else outfile += ".txt";
 	}
+        output = fopen(outfile.c_str(),"w"); //file for query result
 
 	if(size2==1){
 	    data = (int*)malloc(tempsize*sizeof(int)); //single sample
@@ -697,10 +652,9 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
 		free(samnames[0]);
        		free(samnames);
 	    }else{  //MISC\tGT
-   	    	output = fopen(outfile.c_str(),"w");
 	    	if(!fileformat.compare("vcf")){ 
 		    if(x==0) writeHeader(datafile,varpath,format,info,contigs,output); //write Header
-		    getMISC(datafile,varpath,format,info,contigs,row[0],tempsize,output);
+		    getMISC(datafile,varpath,format,info,contigs,row[0],tempsize,output);	    
 	    	}else{
 
             	}
@@ -710,7 +664,7 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
 	}
    
     }
-
+    
     timer1.stop();
     printf("REPORT: Successfully queried data.\n Total time elapsed:%f\n", timer1.realTime());
 
