@@ -1,5 +1,5 @@
 /*
- *Last Update: Jan. 15, 2014
+ *Last Update: Jan. 28, 2014
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
  *
@@ -24,17 +24,17 @@
 #include <vector>
 #include <math.h>
 
-#define CHUNKSIZE1 5000
+#define CHUNKSIZE1 10000
 #define CHUNKSIZE2_1 50000
-#define CHUNKSIZE2_2 3
+#define CHUNKSIZE2_2 200
 #define SNP_CHUNK_CACHE 268435456 /*250MB*/
 #define SIZE1 20
 #define SIZE2 20
-#define SIZE3 30
+#define SIZE3 50
 #define SIZE4 20
-#define SIZE5 2//15
+#define SIZE5 25
 #define SIZE6 2//10
-#define SIZE7 150//80
+#define SIZE7 70//80
 #define SIZE8 25
 
 using namespace std;
@@ -103,12 +103,12 @@ int parseHeader1(string linestream, map<string,int> &headmap,vector<string> &met
 	    headmap.insert(pair<string,int>(key,headmap.size()));
 	    meta1_val.push_back(linestream.substr(first,len-first)); 
 	}else{ //multiple entries (e.g. FILTER)
-	    meta1_val[headmap.find(key)->second].append(";");
+	    meta1_val[headmap.find(key)->second].append(";"); 
 	    meta1_val[headmap.find(key)->second].append(linestream.substr(first,len-first));
 	}
     }else{ 
 	cout << "ERROR: Failed to write one header row." << endl;
-	return 1;
+	exit(EXIT_FAILURE);
     }
 }
 
@@ -134,7 +134,7 @@ void loadHeader1(hid_t file,map<string,int> &headmap,vector<string> &meta1_val,s
     t1 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t1,SIZE1);
     t2 = H5Tcopy(H5T_C_S1);
-    H5Tset_size(t2,H5T_VARIABLE);
+    H5Tset_size(t2,H5T_VARIABLE); //variable length (VLEN)
     memtype = H5Tcreate(H5T_COMPOUND,sizeof(META_1)); //create compound datatype
     H5Tinsert(memtype,"field",HOFFSET(META_1,field),t1);
     H5Tinsert(memtype,"value",HOFFSET(META_1,value),t2);
@@ -242,7 +242,7 @@ void loadHeaderInfoFormat(hid_t file,bool flag,META_3 *&field,int count,map<stri
     t2 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t2,9); /*Integer, Float, Flag, Character, String*/
     t3 = H5Tcopy(H5T_C_S1);
-    H5Tset_size(t3,H5T_VARIABLE);
+    H5Tset_size(t3,H5T_VARIABLE); //variable length (VLEN)
     memtype = H5Tcreate(H5T_COMPOUND,sizeof(META_3));
     H5Tinsert(memtype,"id",HOFFSET(META_3,id),t1);
     H5Tinsert(memtype,"number",HOFFSET(META_3,num),H5T_NATIVE_INT);
@@ -275,7 +275,7 @@ int loadSampleNames(hid_t file,string linestream, string inipath){
     for(x=0;x<9;x++){ //ignore fixed table headername
         idx1 = linestream.find_first_of("\t",idx1+1); 
     } 
-    for(x=0;idx1<linestream.npos;x++){ 
+    for(x=0;idx1<linestream.npos;x++){ //use vector first since number of sample is unknown
         idx2 = linestream.find_first_of("\t",idx1+1); 
         if(idx2==linestream.npos){
 	    temp.push_back(linestream.substr(idx1+1,linestream.length()-idx1));
@@ -293,6 +293,10 @@ int loadSampleNames(hid_t file,string linestream, string inipath){
     for(x=0;x<samplesize;x++){ 
         //tempname << "Sample" << x; //rename    
 	samples[x]=samples[0]+x*SIZE3;
+	if(SIZE3<temp[x].length()){
+	    cout << "ERROR: Insufficient array space for samplenames.\n" << endl;
+	    exit(EXIT_FAILURE);
+	}
         strcpy(samples[x],temp[x].c_str());
 	//strcpy(samples[x],tempname.str().c_str());
         //tempname.str("");
@@ -340,7 +344,7 @@ int parseInfo(string &linestream,int idx1, int idx2, MISC*& misc, int pos, map<s
     misc[pos].info = flag;
     if(SIZE7<=values.length()){ 
 	cout << "\nERROR:Storage size for SNP InfoVal is insufficient.\n";
-	return 1;
+	exit(EXIT_FAILURE);
     }
     strcpy(misc[pos].infoval,values.c_str());
     return 0;
@@ -352,7 +356,7 @@ unsigned int parseFormat(string linestream,int idx1, int idx2, map<string,int> i
     
     while(idx1<idx2){
         temp = linestream.find_first_of(":\t",idx1+1); 
-	tokenidx.push(tokenpos++); //needed to track FORMAT fields not sorted according to header order
+	tokenidx.push(tokenpos++); //needed to track transfer of FORMAT field values in parseFORMATfield(by type); cannot use iterator in a loop since GT is placed in unknown order in FORMAT header.
         flags |= 1<< (ids.find(linestream.substr(idx1,temp-idx1))->second);
         idx1 = temp+1;
     }
@@ -495,9 +499,9 @@ void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &c
     H5Tinsert(memtype,"alt",HOFFSET(MISC,alt),t2);
     H5Tinsert(memtype,"qual",HOFFSET(MISC,qual),H5T_NATIVE_FLOAT);
     H5Tinsert(memtype,"filter",HOFFSET(MISC,filter),t3);
-    H5Tinsert(memtype,"infobit",HOFFSET(MISC,info),H5T_NATIVE_UINT);
+    H5Tinsert(memtype,"infobit",HOFFSET(MISC,info),H5T_NATIVE_UINT); //unsigned int
     H5Tinsert(memtype,"infoval",HOFFSET(MISC,infoval),t4);
-    H5Tinsert(memtype,"formatbit",HOFFSET(MISC,format),H5T_NATIVE_UINT);
+    H5Tinsert(memtype,"formatbit",HOFFSET(MISC,format),H5T_NATIVE_UINT); //unsigned int
 
     //create dataset access property list for MISC dataset
     dataprop = H5Pcreate(H5P_DATASET_ACCESS);
@@ -567,10 +571,6 @@ void setH5FORMATfield(hid_t file, hid_t *&fieldtype_a,hid_t *&space_a,hid_t *&me
     }
 }
 
-int getBitPos(int b){
-    return log2(b&-b);
-}
-
 int getEntryCount(int num,int call){
     int geno[4] = {3,6,10,15}; //possible number of genotypes for calls w/ 1,2,3,4 Alts resp.
     if(num==-1){
@@ -585,7 +585,7 @@ int getEntryCount(int num,int call){
 
 void allocFieldVar(META_3 *format,int formcount,int CHUNK,int samcount,int ***&intvar,float ***&floatvar,char ***&charvar,char ****&stringvar,int *&varloc){
     int t1=0,t2=0,t3=0,t4=0;
-    varloc = (int*)malloc(formcount*sizeof(int)); //for locating field in the multidim variable
+    varloc = (int*)malloc(formcount*sizeof(int)); //for locating field in the multidim variable for each datatype
 
     for(int i=0;i<formcount;i++){
         if(format[i].num==1){
@@ -820,10 +820,10 @@ void parseGenotypes(hid_t file,string gpath,string linestream,int relidx,int sam
 		
 	    }else{
                 //heterozygous
-		temp=linestream[idx1]-48; //convert from char to int  
+		temp=linestream[idx1]-48; //convert from char to int ('1'/'1' -> 1/1)  
 	    	callstr = callvec[temp]; //get the call
             	idx1+=2;  
-	    	temp=linestream[idx1]-48; //convert from char to int  
+	    	temp=linestream[idx1]-48; //convert from char to int ('1'/'1' -> 1/1) 
 	    	callstr += callvec[temp]; //get the call
                 intvar[gtloc][relidx][counter] = states.find(callstr)->second; //save the call code
 	    }
@@ -926,7 +926,8 @@ int buildFieldIndex(string datafile,META_3 *format,int formcount,int row,int sam
     varpath = inipath + "/FORMATfields";
     for(int i=0;i<formcount;i++){
         if(format[i].num==1){//only single-value field can be indexed
-            if(!strcmp(format[i].id,"GT") || format[i].type[0]=='3' || format[i].type[0]=='3') continue; //no indexing for GT/char/string
+            if(!strcmp(format[i].id,"GT") || format[i].type[0]=='3' || format[i].type[0]=='4') 	
+		continue; //no indexing for GT/char/string
 	    varname = format[i].id;
             IndexBuilder* indexBuilder = new IndexBuilder(datafile, model, indexfile,0,"",""); 
 	    indexBuilder->buildIndexes(binning, varpath, varname.c_str());
@@ -988,6 +989,10 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
  	    	parseHeader1(linestream,headmap,meta1_val); 
 	    }
 	}else if(linestream.substr(0,6) == "#CHROM"){ 
+	    loadHeader1(file,headmap,meta1_val,gpath1); 
+	    if(contigcount){ loadHeader2(file,contig,contigcount,contigmap,gpath1);}
+	    loadHeaderInfoFormat(file,false,info,infocount,infomap,gpath1); //INFO fields 
+    	    loadHeaderInfoFormat(file,true,format,formcount,formmap,gpath1); //FORMAT fields 
             samcount = loadSampleNames(file,linestream,inipath);
 	    break; 
 	}else{
@@ -996,17 +1001,13 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
 	    return 1; /*finished reading header*/
 	}
     } 
-    loadHeader1(file,headmap,meta1_val,gpath1); 
-    if(contigcount){ loadHeader2(file,contig,contigcount,contigmap,gpath1);} 
-    loadHeaderInfoFormat(file,false,info,infocount,infomap,gpath1); //INFO fields 
-    loadHeaderInfoFormat(file,true,format,formcount,formmap,gpath1); //FORMAT fields
     
     int counter1=0,counter2=0,lastparsepos; 
     int *varloc; //location of FORMAT fields in multidimensional variables(by type) below
     queue<int> tokenidx; //index of each FORMAT field values in the tokenized data
 			 //this is necessary since FORMAT fields/SNP may not be in order 
        //variables to contain parsed fields(single-value)
-    int ***intvar=NULL; //2D to accomodate fields using same datatype
+    int ***intvar=NULL; //2D to accomodate fields with same datatype
     float ***floatvar=NULL;
     char ***charvar=NULL;
       //variables to contain parsed fields(multi-value/string type)
@@ -1162,13 +1163,13 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     timer1.stop();
     printf("REPORT: Successfully completed loading data.\n Total time elapsed:%f\n", timer1.realTime());
     timer2.start();
+    free(misc);
     //build index
     buildFieldIndex(datafile,format,formcount,row,samcount,inipath);
     timer2.stop();
     printf("REPORT: Successfully completed indexing data.\n Total time elapsed:%f\n", timer2.realTime());
     free(info);
     free(format);
-    free(misc);
     free(varloc);
         
     return 0;

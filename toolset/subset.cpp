@@ -1,5 +1,5 @@
 /*
- *Last Update: Jan. 22, 2013
+ *Last Update: Jan. 27, 2013
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
  *
@@ -37,26 +37,31 @@ void returnAlleleStates(vector<string> &Calls){
     Calls.push_back("A/C");
     Calls.push_back("A/G");
     Calls.push_back("A/N");
+
     Calls.push_back("T/A");
     Calls.push_back("T/T");
     Calls.push_back("T/C");
     Calls.push_back("T/G");
     Calls.push_back("T/N");
+
     Calls.push_back("C/A");
     Calls.push_back("C/T");
     Calls.push_back("C/C");
     Calls.push_back("C/G");
     Calls.push_back("C/N");
+
     Calls.push_back("G/A");
     Calls.push_back("G/T");
     Calls.push_back("G/C");
     Calls.push_back("G/G");
     Calls.push_back("G/N");
+
     Calls.push_back("N/A");
     Calls.push_back("N/T");
     Calls.push_back("N/C");
     Calls.push_back("N/G");
     Calls.push_back("N/N");
+
     Calls.push_back("./.");
     Calls.push_back(".");
 }
@@ -306,20 +311,19 @@ int getMeta(string datafile,string path,FILE *output){
     //close identifiers and free resources
     status = H5Dclose(dset);
     status = H5Sclose(space);
+    status = H5Tclose(type);
     status = H5Fclose(file);
     free(data);
     return 0;
 }
 
-int getINFOFORMAT(string datafile,string path,vector<string> &vec,FILE *output,bool flag){
-    META_3 *data;
+int getFORMAT(string datafile,string path,META_3 *&format,int &formcount,FILE *output){
     hid_t file,dset,space,type;
     herr_t status;
     hsize_t dims[1] = {0};
     int ndims;
 
-    if(flag) path += "/meta/format";
-    else path += "/meta/info";
+    path += "/meta/format";
     //Open file and dataset
     file = H5Fopen(datafile.c_str(),H5F_ACC_RDONLY,H5P_DEFAULT); 
     dset = H5Dopen(file,path.c_str(),H5P_DEFAULT); 
@@ -328,31 +332,64 @@ int getINFOFORMAT(string datafile,string path,vector<string> &vec,FILE *output,b
     space = H5Dget_space(dset);
     type = H5Dget_type(dset);
     ndims = H5Sget_simple_extent_dims(space,dims,NULL);
-    data = (META_3*)malloc(dims[0]*sizeof(META_3));
-    
-    status = H5Dread(dset,type,H5S_ALL,H5S_ALL,H5P_DEFAULT,data);
-
+    format = (META_3*)malloc(dims[0]*sizeof(META_3));
+    formcount = dims[0];
+    status = H5Dread(dset,type,H5S_ALL,H5S_ALL,H5P_DEFAULT,format);
+ 
     for(int i=0;i<dims[0];i++){
-	if(flag){
-	    fprintf(output,"##FORMAT=<ID=%s,",data[i].id);
-	    vec.push_back(data[i].id);
-        }else{
- 	    fprintf(output,"##INFO=<ID=%s,",data[i].id);
-            vec.push_back(data[i].id);
-	}
+	fprintf(output,"##FORMAT=<ID=%s,",format[i].id);
+       
+        if(format[i].num==-1) fprintf(output,"Number=A,");
+    	else if(format[i].num==-2) fprintf(output,"Number=G,");
+    	else if(format[i].num==-3) fprintf(output,"Number=.,");
+    	else fprintf(output,"Number=%d,",format[i].num);
 
-        if(data[i].num==-1) fprintf(output,"Number=A,");
-    	else if(data[i].num==-2) fprintf(output,"Number=G,");
-    	else if(data[i].num==-3) fprintf(output,"Number=.,");
-    	else fprintf(output,"Number=%d,",data[i].num);
-        fprintf(output,"Type=%s,Description=\"%s\">\n",data[i].type,data[i].desc);
+        fprintf(output,"Type=%s,Description=\"%s\">\n",format[i].type,format[i].desc);
+        format[i].type[0]=checkType(format[i].type); //transpose to integer for faster comparison
     }
 
     //close identifiers and free resources
     status = H5Dclose(dset);
     status = H5Sclose(space);
+    status = H5Tclose(type);
     status = H5Fclose(file);
-    free(data);
+    return 0;
+}
+
+int getINFO(string datafile,string path,META_3 *&info,FILE *output){
+    hid_t file,dset,space,type;
+    herr_t status;
+    hsize_t dims[1] = {0};
+    int ndims;
+
+    path += "/meta/info";
+    //Open file and dataset
+    file = H5Fopen(datafile.c_str(),H5F_ACC_RDONLY,H5P_DEFAULT); 
+    dset = H5Dopen(file,path.c_str(),H5P_DEFAULT); 
+
+    //get dataspace and allocate memory for read buffer
+    space = H5Dget_space(dset);
+    type = H5Dget_type(dset);
+    ndims = H5Sget_simple_extent_dims(space,dims,NULL);
+    info = (META_3*)malloc(dims[0]*sizeof(META_3));
+
+    status = H5Dread(dset,type,H5S_ALL,H5S_ALL,H5P_DEFAULT,info);
+
+    for(int i=0;i<dims[0];i++){
+ 	fprintf(output,"##INFO=<ID=%s,",info[i].id);
+
+        if(info[i].num==-1){ fprintf(output,"Number=A,");}
+    	else if(info[i].num==-2){ fprintf(output,"Number=G,");}
+    	else if(info[i].num==-3){ fprintf(output,"Number=.,");}
+    	else{ fprintf(output,"Number=%d,",info[i].num);}
+        fprintf(output,"Type=%s,Description=\"%s\">\n",info[i].type,info[i].desc);
+    }
+
+    //close identifiers and free resources
+    status = H5Dclose(dset);
+    status = H5Sclose(space);
+    status = H5Tclose(type);
+    status = H5Fclose(file);
     return 0;
 }
 
@@ -384,6 +421,7 @@ int getContigs(string datafile,string path,vector<string> &contigs,FILE *output,
     //close identifiers and free resources
     status = H5Dclose(dset);
     status = H5Sclose(space);
+    status = H5Tclose(type);
     status = H5Fclose(file);
     free(data);
     return 0;
@@ -420,26 +458,89 @@ int getSampleNames(string datafile,string path,FILE *output){
     //close identifiers and free resources
     status = H5Dclose(dset);
     status = H5Sclose(space);
+    status = H5Tclose(type);
     status = H5Fclose(file);
     free(samples[0]);
     free(samples);
+    return dims[0];
+}
+
+int writeHeader(string datafile,string path,META_3 *&format,META_3 *&info,vector<string> &contigs,int &formcount,FILE *output){
+    getMeta(datafile,path,output);
+    getFORMAT(datafile,path,format,formcount,output); //FORMAT
+    getINFO(datafile,path,info,output); //INFO
+    getContigs(datafile,path,contigs,output,1); //Contigs
+    return getSampleNames(datafile,path,output); //Sample Names
+}
+
+int printFORMAT(META_3 *format,int idx,int *data,FILE *output){     
     return 0;
 }
 
-int writeHeader(string datafile,string path,vector<string> &format,vector<string> &info, vector<string> &contigs,FILE *output){
-    getMeta(datafile,path,output);
-    getINFOFORMAT(datafile,path,format,output,1); //FORMAT
-    getINFOFORMAT(datafile,path,info,output,0); //INFO
-    getContigs(datafile,path,contigs,output,1); //Contigs
-    getSampleNames(datafile,path,output); //Sample Names
+int printINFO(META_3 *info,int idx,MISC *data, FILE *output){     
+    int x,pos;
+    unsigned int y = data[idx].info;
+    char *temp=NULL;
+
+    temp = strtok(data[idx].infoval,";");
+    for (x = 0; y; x++)
+    {
+        pos=log2(y&-y); //get the rightmost bit and its location
+	//-Brian Kernighan's Method
+  	y &= y - 1; // clear the least significant bit set 
+        if(info[pos].num==0){
+   	    if(y==0) fprintf(output,"%s",info[pos].id);  //just for the separator(;)
+	    else fprintf(output,"%s;",info[pos].id);  
+	    continue; //skip flag
+        }
+	if(y!=0) fprintf(output,"%s=%s;",info[pos].id,temp); //just for the separator(;)
+	else fprintf(output,"%s=%s",info[pos].id,temp);   
+	temp = strtok(NULL,";");
+    }
+    return 0;
 }
 
-int getMISC(string datafile,string path,vector<string> format,vector<string> info,vector<string> contigs,int row,int size,FILE *output){
+int readFORMATfields(string datafile,string path,int idx,META_3 *&format,int *varloc,int row,int size,int ***&intvar){
+    hid_t file,dset,space,type;
+    hsize_t dims[2] = {0,0};
+    herr_t status;
+    int ndims;
+    hsize_t offset[2]={row,0};
+    hsize_t count[2]={size,0};
+
+    path += "/FORMATfields/"; 
+    path += format[idx].id; 
+    //Open file and dataset
+    file = H5Fopen(datafile.c_str(),H5F_ACC_RDONLY,H5P_DEFAULT); 
+    dset = H5Dopen(file,path.c_str(),H5P_DEFAULT); 
+
+    //get dataspace and allocate memory for read buffer
+    space = H5Dget_space(dset);
+    type = H5Dget_type(dset);
+    ndims = H5Sget_simple_extent_dims(space,dims,NULL);
+    count[1]=dims[1]; 
+    status = H5Sselect_hyperslab(space, H5S_SELECT_SET,offset,NULL,count,NULL);
+    status = H5Dread(dset,type,H5S_ALL,space,H5P_DEFAULT,intvar[varloc[idx]][0]);
+    printf("%d ",intvar[idx][1][0]);
+    //for(int i=0;i<size-1;i++){
+	//printf("%d ",intvar[idx][i][0]); //error for last field
+    //}
+
+    //close identifiers and free resources
+    status = H5Dclose(dset);
+    status = H5Sclose(space);
+    status = H5Tclose(type);
+    status = H5Fclose(file);
+    return 0;
+}
+
+int getRow(string datafile,string path,META_3 *format,META_3 *info,vector<string> contigs,int row,int size,int *gt,FILE *output){
     MISC *data;
     hid_t file,dset,space,type,dapl;
     herr_t status;
     hsize_t offset[1]={row};
     hsize_t count[1]={size};
+    
     cout << path<< " "<<offset[0] <<" " << count[0] << " " << size;
     path += "/misc";
     //Open file and dataset
@@ -449,18 +550,21 @@ int getMISC(string datafile,string path,vector<string> format,vector<string> inf
     //get dataspace and allocate memory for read buffer 
     space = H5Dget_space(dset);
     type = H5Dget_type(dset);
-    status = H5Sselect_hyperslab(space, H5S_SELECT_AND,offset,NULL,count,NULL);
+    status = H5Sselect_hyperslab(space, H5S_SELECT_SET,offset,NULL,count,NULL);
     data = (MISC*)malloc(size*sizeof(MISC));
     
     status = H5Dread(dset,type,H5S_ALL,space,H5P_DEFAULT,data);
 
     for(int i=0;i<size;i++){
 	fprintf(output,"\n%s\t%d\t%s\t%c\t%s\t%.2f\t%s\t",contigs[data[i].chrom].c_str(),data[i].pos,data[i].id,data[i].ref,data[i].alt,data[i].qual,data[i].filter);
+	printINFO(info,i,data,output);
+	printFORMAT(format,i,gt,output);
     }
 
     //close identifiers and free resources
     status = H5Dclose(dset);
     status = H5Sclose(space);
+    status = H5Tclose(type);
     status = H5Fclose(file);
     free(data);
     return 0;
@@ -471,13 +575,22 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
     ibis::horometer timer1;
     timer1.start(); 
     vector<int> col,row; //bounds
-    vector<string> format,info,contigs;
-    int idx,size1=1,size2=1,QUERY_CHUNK=3000; //default is 1	
+    vector<string> contigs;
+    META_3 *info,*format;
+    int idx,size1=1,size2=1,QUERY_CHUNK=3000; //default is 1
+    int samcount=0,formcount;
     char **samnames;
     char **CHROM1=NULL; //Hapmap Chroms
     int *CHROM2=NULL; //VCF Chrom indexes
-    int *POS;
+    int *POS; 
+    int *varloc; //location of FORMAT fields in multidimensional variables(by type)
     char q_chrom[15]; //specific chrom
+
+    int ***intvar=NULL; //2D to accomodate fields with same datatype
+    float ***floatvar=NULL;
+    char ***charvar=NULL;
+    char ****stringvar=NULL;
+
     FQ::FileFormat model = FQ::FQ_HDF5;
     QueryProcessor* fq = new QueryProcessor(datafile, model, "", 0, "",""); 
   
@@ -653,8 +766,27 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
        		free(samnames);
 	    }else{  //MISC\tGT
 	    	if(!fileformat.compare("vcf")){ 
-		    if(x==0) writeHeader(datafile,varpath,format,info,contigs,output); //write Header
-		    getMISC(datafile,varpath,format,info,contigs,row[0],tempsize,output);	    
+		    if(x==0){
+			samcount=writeHeader(datafile,varpath,format,info,contigs,formcount,output); //write Header
+			//allocate variables for each type of FORMAT field
+			allocFieldVar(format,formcount,tempsize,samcount,intvar,floatvar,charvar,stringvar,varloc); 
+		    }
+		    for(int i=0;i<formcount;i++){
+        		if(format[i].num==1){
+    	    		    if(format[i].type[0]=='0' || !strcmp(format[i].id,"GT")){ //integer/GT
+	        		readFORMATfields(datafile,varpath,i,format,varloc,row[0],tempsize,intvar);
+    	    		    }else if(format[i].type[0]=='1'){ //float
+             			//readFORMATfields(varloc[i],floatvar);
+    	    		    }else if(format[i].type[0]=='3'){ //character
+            			//readFORMATfields(varloc[i],charvar);
+    	    		    }else if(format[i].type[0]=='4'){ //string
+	    			//readFORMATfields(varloc[i],stringvar);
+    	    		    }
+        		}else{
+	    		    //readFORMATfields(varloc[i],stringvar);
+		    	}
+    		    }
+		    getRow(datafile,varpath,format,info,contigs,row[0],tempsize,data,output);	    
 	    	}else{
 
             	}
@@ -669,8 +801,9 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
     printf("REPORT: Successfully queried data.\n Total time elapsed:%f\n", timer1.realTime());
 
     if(!fetch){
-       format.clear();
-       info.clear();
+       	free(format);
+       	free(info);
+	freeFieldVar(intvar,floatvar,charvar,stringvar);
     }
     if(!fileformat.compare("vcf")) contigs.clear();
     free(data);
