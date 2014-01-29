@@ -1,5 +1,5 @@
 /*
- *Last Update: Jan. 27, 2013
+ *Last Update: Jan. 29, 2013
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
  *
@@ -577,7 +577,7 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
     vector<int> col,row; //bounds
     vector<string> contigs;
     META_3 *info,*format;
-    int idx,size1=1,size2=1,QUERY_CHUNK=3000; //default is 1
+    int idx,size1=0,size2=1,QUERY_CHUNK=3000; //default is 1
     int samcount=0,formcount;
     char **samnames;
     char **CHROM1=NULL; //Hapmap Chroms
@@ -609,48 +609,44 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
 	idx=sample.find('-',0);
 	if(idx==sample.npos){
 	    col.push_back(atoi(sample.substr(0,idx).c_str()));
-            if(col[0]<0){
-	    	printf("ERROR: Invalid sample bounds.\n");
-	    	return 1;
-	    }
+	    cout<<"Sample:"<<col[0];
+            if(col[0]<0){ printf("ERROR: Invalid sample bounds.\n"); return 1;}
 	}else if(idx==sample.length()-1){
-		printf("ERROR: Invalid sample bounds.\n");
-		return 1;
+	    printf("ERROR: Invalid sample bounds.\n"); return 1;
 	}else{
 	    col.push_back(atoi(sample.substr(0,idx).c_str()));
 	    col.push_back(atoi(sample.substr(idx+1,sample.length()-idx+1).c_str()));
 	    if(col[0]<0 || col[1]<0 || col[0]>=col[1]){
-	    	printf("ERROR: Invalid sample bounds.\n");
-	    	return 1;
-	    }
+	    	printf("ERROR: Invalid sample bounds.\n"); return 1;
+	    } cout<<"Sample:"<<col[0]<<"-"<<col[1];
 	    size2=col[1]-col[0]+1; //number of samples
         }
     }else{
-	printf("ERROR: No sample number specified.\n");
-        return 1;
+	printf("ERROR: No sample number specified.\n"); return 1;
     }
 
     /*Get the SNP bounds for subset sample*/
     if(!snpbound.empty()){
-	idx=snpbound.find(':',0);
-	if(idx==snpbound.npos || idx==snpbound.length()-1){
-		idx=snpbound.find('-');
-		if(idx==snpbound.npos || idx==snpbound.length()-1){
-		    printf("ERROR: Invalid SNP bounds.\n");
-		    return 1;
-		}
+	int inipos=snpbound.find(':',0); 
+	if(inipos==snpbound.length()-1){ //with CHROM
+	    printf("ERROR: Invalid query. SNP position not specified."); return 1;
+	}
+	if(inipos!=snpbound.npos) strcpy(q_chrom,snpbound.substr(0,inipos++).c_str());
+	else inipos=0;
+
+	idx=snpbound.find('-',inipos);
+	if(idx==snpbound.npos || idx==snpbound.length()-1){ //single SNP
+	    row.push_back(atoi(snpbound.substr(inipos,snpbound.length()-inipos).c_str()));
+	    size1=1; cout<<" | row:"<<row[0]<<"\n";
+	    if(row[0]<0){ printf("ERROR: Invalid SNP position.\n"); return 1;}
 	}else{
-		strcpy(q_chrom,snpbound.substr(0,idx).c_str());
-		idx=snpbound.find('-',idx);
-	}
-	cout << q_chrom;
-	row.push_back(atoi(snpbound.substr(0,idx).c_str()));
-	row.push_back(atoi(snpbound.substr(idx+1,snpbound.length()-idx+1).c_str()));
-	if(row[0]<0 || row[1]<0 || row[0]>=row[1]){
-	    printf("ERROR: Invalid SNP bounds.\n");
-	    return 0;
-	}
-	size1=row[1]-row[0]+1; //number of samples
+	    row.push_back(atoi(snpbound.substr(inipos,idx-inipos).c_str()));
+	    row.push_back(atoi(snpbound.substr(idx+1,snpbound.length()-idx+1).c_str()));
+	    size1=row[1]-row[0]+1; //number of rows
+	    if(row[0]<0 || row[1]<0 || row[0]>=row[1]){
+	    	printf("ERROR: Invalid SNP bounds.\n"); return 1;
+	    } cout<<" | row:"<< row[0] <<"-"<<row[1]<<"\n";
+	} 
     }else{
 	row.push_back(0);
     }
@@ -681,7 +677,7 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
 	 //TO DO: check the 1st and last storage index of bounds within chromX
         // CHROM=q_chrom && pos<row[1]
         int block=0,tempsize=QUERY_CHUNK;
-	size1=(size1==1)?dims[0]:size1; //assigned all rows if no range is specified
+	size1=(size1==0)?dims[0]:size1; //assigned all rows if no range is specified
         block=size1/QUERY_CHUNK; 
 	if(size1%QUERY_CHUNK) block++; //another block for remainders
         if(fetch){
@@ -701,7 +697,7 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
 	}else{
 	    data = (int*)malloc(tempsize*size2*sizeof(int)); //multiple sample
 	}
-
+        int rowtemp=0;
         for(int x=0;x<block;x++){ //block fetching to avoid memory overload
             //do the fetch and write here
             if(x+1==block && size1%QUERY_CHUNK>0){
@@ -711,8 +707,8 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
 		else{ data = (int*)malloc(tempsize*size2*sizeof(int));
 		}
 	    }
-	    row[1]=row[0]+tempsize; //exclusive y in x:y
-            paramtemp<< dataname <<"["<<row[0]<<":"<<row[1]<< ",";
+	    rowtemp=row[0]+tempsize; //exclusive y in x:y
+            paramtemp<< dataname <<"["<<row[0]<<":"<<rowtemp<< ",";
             
 	    if(size2==1) paramtemp << col[0] << "]";
 	    else paramtemp << col[0] << ":" << col[1]+1 << "]"; //exclusive y in x:y 
@@ -791,7 +787,7 @@ int fetchData(string datafile,string fileformat,string sample,string snpbound,st
 
             	}
 	    }
-	    row[0]=row[1];
+	    row[0]=rowtemp;
 	    paramtemp.str("");
 	}
    
