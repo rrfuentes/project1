@@ -1,5 +1,5 @@
 /*
- *Last Update: Jan. 28, 2014
+ *Last Update: March. 28, 2014
  *Author: Roven Rommel B. Fuentes
  *TT-Chang Genetic Resources Center, International Rice Research Institute
  *
@@ -26,15 +26,15 @@
 
 #define CHUNKSIZE1 10000
 #define CHUNKSIZE2_1 50000
-#define CHUNKSIZE2_2 200
+#define CHUNKSIZE2_2 1//3//200//1
 #define SNP_CHUNK_CACHE 268435456 /*250MB*/
 #define SIZE1 20
 #define SIZE2 20
-#define SIZE3 50
+#define SIZE3 20//50//20
 #define SIZE4 20
-#define SIZE5 25
-#define SIZE6 2//10
-#define SIZE7 70//80
+#define SIZE5 2//25//2
+#define SIZE6 2//10//2
+#define SIZE7 150//70//100//80
 #define SIZE8 25
 
 using namespace std;
@@ -60,8 +60,6 @@ typedef struct{
 }META_3;
 
 typedef struct{
-    int chrom; /*index of META_3 or contig table*/
-    int pos;
     char id[SIZE5];
     char ref; 
     char alt[6];
@@ -394,7 +392,7 @@ int parseAlt(string linestream,int idx1, int idx2,MISC *&misc,int pos,vector<cha
     return 0;
 }
 
-int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string,int> formmap,META_2 *&contig,int contigcount,map<string,int> &contigmap,vector<char> &callvec, int snpidx,int &indelcount,queue<int> &tokenidx){
+int parseMisc(string linestream, MISC *&misc, int **&CHR_POS,map<string,int> infomap, map<string,int> formmap,META_2 *&contig,int contigcount,map<string,int> &contigmap,vector<char> &callvec, int snpidx,int &indelcount,queue<int> &tokenidx){
     int idx1=0,idx2=0;
     bool indel=0;
     unsigned int flag=0;
@@ -409,17 +407,17 @@ int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string
             contig = (META_2*)realloc(contig,contigmap.size()*sizeof(META_2));
 	    strcpy(contig[contigmap.size()-1].id,temp.c_str());
 	    contig[contigmap.size()-1].len=0;
-	    misc[snpidx].chrom = contigmap.size()-1;
+	    CHR_POS[snpidx][0] = contigmap.size()-1;
 	}else{ 
-	    misc[snpidx].chrom = contigmap.find(temp)->second;
+	    CHR_POS[snpidx][0] = contigmap.find(temp)->second;
 	}
     }else{
-	misc[snpidx].chrom = contigmap.find(temp)->second;
+	CHR_POS[snpidx][0] = contigmap.find(temp)->second;
     }
     idx1=idx2+1;
     //POS
     idx2 = linestream.find_first_of("\t",idx1+1); 
-    misc[snpidx].pos = atoi((linestream.substr(idx1,idx2-idx1)).c_str());
+    CHR_POS[snpidx][1] = atoi((linestream.substr(idx1,idx2-idx1)).c_str());
     idx1=idx2+1;
     //ID
     idx2 = linestream.find_first_of("\t",idx1+1); 
@@ -469,6 +467,27 @@ int parseMisc(string linestream, MISC *&misc,map<string,int> infomap, map<string
 }
 
 
+void setH5CHRPOSFormat(hid_t file,hid_t &space,hid_t &dset,hid_t &cparms,hid_t &dataprop,int chunk,string inipath){
+    herr_t status;
+    hsize_t dim[2]={chunk,2};
+    hsize_t maxdim[2] = {H5S_UNLIMITED,2};
+    hsize_t chkdim[2] = {chunk,1};
+
+    string name = inipath + "/pos";
+    space = H5Screate_simple(2,dim,maxdim); //create data space
+    cparms = H5Pcreate(H5P_DATASET_CREATE); //create chunk 
+    status = H5Pset_chunk(cparms,2,chkdim);
+    status = H5Pset_deflate(cparms,8); //compression
+
+    //create dataset access property list for MISC dataset
+    dataprop = H5Pcreate(H5P_DATASET_ACCESS);
+    status = H5Pset_chunk_cache(dataprop,9973,
+             SNP_CHUNK_CACHE*2,H5D_CHUNK_CACHE_W0_DEFAULT); /*set snp chunk size*/
+    assert(status >=0);
+    dset = H5Dcreate (file, name.c_str(), H5T_NATIVE_INT, space, H5P_DEFAULT, cparms, dataprop);
+    //printf("%i",dset);
+}
+
 void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &cparms,hid_t &dataprop,int chunk,string inipath){
     hid_t t1,t2,t3,t4;
     herr_t status;
@@ -492,8 +511,6 @@ void setH5MiscFormat(hid_t file,hid_t &memtype,hid_t &space,hid_t &dset,hid_t &c
     t4 = H5Tcopy(H5T_C_S1);
     H5Tset_size(t4,SIZE7);
     memtype = H5Tcreate(H5T_COMPOUND,sizeof(MISC));
-    H5Tinsert(memtype,"chrom",HOFFSET(MISC,chrom),H5T_NATIVE_INT);
-    H5Tinsert(memtype,"pos",HOFFSET(MISC,pos),H5T_NATIVE_INT);
     H5Tinsert(memtype,"id",HOFFSET(MISC,id),t1);
     H5Tinsert(memtype,"ref",HOFFSET(MISC,ref),H5T_C_S1);
     H5Tinsert(memtype,"alt",HOFFSET(MISC,alt),t2);
@@ -906,15 +923,35 @@ void setAlleleStates(map<string,int> &Calls){
     Calls["NN"]=24;
 }
 
-int buildFieldIndex(string datafile,META_3 *format,int formcount,int row,int samcount,string inipath){
-    string varpath,variable,indexfile,varname;
-    vector<uint64_t> dims;
-    FQ::DataType type;
+int buildPosIndex(string datafile,string inipath){
+    string varpath,indexfile,varname;
     FQ::FileFormat model = FQ::FQ_HDF5; 
     indexfile = datafile+".index";
     char binning[]= "precision=2";
     ibis::gParameters().add(FQ_REPORT_STATISTIC, "false");
-    ibis::gParameters().add("fileManager.maxBytes", "2GB");
+    //ibis::gParameters().add("fileManager.maxBytes", "2GB");
+    
+    IndexBuilder* indexBuilder = new IndexBuilder(datafile, model, indexfile, 0,"",""); 
+    if (!indexBuilder->isValid()) {
+	cout << "ERROR: Failed to initialize the IndexBuilder object for file.\n";
+	delete(indexBuilder);
+	return 1;
+    }
+    varname = "/pos[,0]";
+    indexBuilder->buildIndexes(binning, inipath, varname.c_str());
+    varname = "/pos[,1]";
+    indexBuilder->buildIndexes(binning, inipath, varname.c_str());
+    delete(indexBuilder);
+}
+
+
+int buildFieldIndex(string datafile,META_3 *format,int formcount,string inipath){
+    string varpath,indexfile,varname;
+    FQ::FileFormat model = FQ::FQ_HDF5; 
+    indexfile = datafile+".index";
+    char binning[]= "precision=2";
+    ibis::gParameters().add(FQ_REPORT_STATISTIC, "false");
+    //ibis::gParameters().add("fileManager.maxBytes", "2GB");
     
     IndexBuilder* indexBuilder = new IndexBuilder(datafile, model, indexfile, 0,"",""); 
     if (!indexBuilder->isValid()) {
@@ -965,6 +1002,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     MISC* misc = NULL;
     META_3* info=NULL, *format = NULL;
     int contigcount=0,infocount=0,formcount=0,samcount=0, indelcount = 0;
+    int **CHR_POS=NULL;
     
     /*create new file*/
     inipath=varPath+varName;
@@ -1013,24 +1051,34 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
       //variables to contain parsed fields(multi-value/string type)
     char **** stringvar=NULL; 
     
-    hid_t memtype1,space1,memspace1,dset1,cparms1,dataprop1; //variables for MISC
+    hid_t memtype1,space1,memspace1_1,memspace1_2,dset1_1,dset1_2,cparms1,dataprop1; //variables for MISC
     hid_t *fieldtype_a, *space_a, *memspace_a,*dset_a,cparms2,dataprop2; //variables for FORMAT field
     herr_t status;
-    hsize_t dim1[1]={CHUNKSIZE1}; 
+    hsize_t dim1_1[1]={CHUNKSIZE1}; 
+    hsize_t dim1_2[2]={CHUNKSIZE1,2}; 
     hsize_t dim2[2]={CHUNKSIZE2_1,samcount};
-    hsize_t maxdim1[1] = {H5S_UNLIMITED};
+    hsize_t maxdim1_1[1] = {H5S_UNLIMITED};
+    hsize_t maxdim1_2[2] = {H5S_UNLIMITED,2};
     hsize_t maxdim2[2] = {H5S_UNLIMITED,samcount};
-    hssize_t offset1[1]={0};
+    hssize_t offset1_1[1]={0};
+    hssize_t offset1_2[2]={0,0};
     hssize_t offset2[2]={0,0};
-    hsize_t count1[1]={CHUNKSIZE1};
+    hsize_t count1_1[1]={CHUNKSIZE1};
+    hsize_t count1_2[2]={CHUNKSIZE1,2};
     hsize_t count2[2]={CHUNKSIZE2_1,samcount};
-    hsize_t newsize1[1]={CHUNKSIZE1};
+    hsize_t newsize1_1[1]={CHUNKSIZE1};
+    hsize_t newsize1_2[2]={CHUNKSIZE1,2};
     hsize_t newsize2[2]={CHUNKSIZE2_1,samcount};
 
     //allocate space for FORMAT field container/var
     allocFieldVar(format,formcount,CHUNKSIZE2_1,samcount,intvar,floatvar,charvar,stringvar,varloc);
 
     misc = (MISC*)malloc(CHUNKSIZE1*sizeof(MISC));
+    //separate Chrom/Contig index and Position to enable indexing using FastQuery
+    CHR_POS = (int**)malloc(CHUNKSIZE1*sizeof(int*));
+    CHR_POS[0] = (int*)calloc(CHUNKSIZE1*2,sizeof(int));
+    for(int i=0;i<CHUNKSIZE1;i++){ CHR_POS[i]=CHR_POS[0]+i*2;} 
+
     if(misc==NULL){
  	cout << "ERROR: Insufficient memory. Adjust the chunksize." << endl;
         cout << "REPORT: Failed to complete writing the data" << endl;
@@ -1041,7 +1089,7 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     for(int x=0;fp!=NULL;x++){ 
         getline(fp,linestream); 
 	if(fp!=NULL){ 
-            lastparsepos = parseMisc(linestream,misc,infomap,formmap,contig,contigcount,contigmap,callvec,counter1, indelcount,tokenidx); 
+            lastparsepos = parseMisc(linestream,misc,CHR_POS,infomap,formmap,contig, contigcount,contigmap,callvec,counter1, indelcount,tokenidx); 
             counter1++; 
             parseGenotypes(file,gpath2,linestream,counter2,samcount,lastparsepos+1,callvec,states,format,misc[counter1-1].format,formmap,intvar,floatvar,charvar, stringvar,varloc,tokenidx);
             counter2++; 
@@ -1049,26 +1097,37 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
         if(counter1==CHUNKSIZE1 || (fp==NULL && counter1>0)){
             if(x+1==CHUNKSIZE1){ //first slab
                 //set compound datatype and spaces
-		setH5MiscFormat(file,memtype1,space1,dset1,cparms1,dataprop1,CHUNKSIZE1,inipath);
-                memspace1 = H5Dget_space(dset1); 
+		setH5MiscFormat(file,memtype1,space1,dset1_1,cparms1,dataprop1,CHUNKSIZE1,inipath);
+		setH5CHRPOSFormat(file,space1,dset1_2,cparms1,dataprop1,CHUNKSIZE1,inipath);
+                memspace1_1 = H5Dget_space(dset1_1);
+                memspace1_2 = H5Dget_space(dset1_2); 
                 //write first slab
-            	status = H5Dwrite(dset1, memtype1, H5S_ALL, H5S_ALL, H5P_DEFAULT, misc);  
+            	status = H5Dwrite(dset1_1, memtype1, H5S_ALL, H5S_ALL, H5P_DEFAULT, misc);  
+		status = H5Dwrite(dset1_2, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &CHR_POS[0][0]); 
 	    }else{  
-		offset1[0]=newsize1[0];
+		offset1_1[0]=newsize1_1[0];
+                offset1_2[0]=newsize1_2[0];
           	//extend data later for the next slab
                 if(fp==NULL && counter1>0){
- 		     count1[0] = counter1;
-		     newsize1[0]=newsize1[0]+counter1;
-		     dim1[0]=counter1;
-    		     memspace1 = H5Screate_simple(1,dim1,maxdim1); 
+ 		     count1_1[0]= count1_2[0] = counter1;
+		     newsize1_1[0]=newsize1_2[0]=newsize1_1[0]+counter1;
+		     dim1_1[0]=dim1_2[0]=counter1;
+    		     memspace1_1 = H5Screate_simple(1,dim1_1,maxdim1_1); 
+		     memspace1_2 = H5Screate_simple(2,dim1_2,maxdim1_2); 
 		}else{
-		     newsize1[0]=newsize1[0]+counter1; 
+		     newsize1_1[0]=newsize1_2[0]=newsize1_1[0]+counter1; 
 		}
-		status = H5Dset_extent(dset1,newsize1);
-	 	space1 = H5Dget_space(dset1);
+		status = H5Dset_extent(dset1_1,newsize1_1);
+                status = H5Dset_extent(dset1_2,newsize1_2);
+	 	space1 = H5Dget_space(dset1_1);
                 status = H5Sselect_hyperslab(space1, H5S_SELECT_SET,
- 			(const hsize_t*)offset1,NULL, count1, NULL);
-		status = H5Dwrite(dset1,memtype1,memspace1,space1,H5P_DEFAULT,misc); 
+ 			(const hsize_t*)offset1_1,NULL, count1_1, NULL);
+		status = H5Dwrite(dset1_1,memtype1,memspace1_1,space1,H5P_DEFAULT,misc); 
+		status = H5Sclose(space1); 
+		space1 = H5Dget_space(dset1_2);
+                status = H5Sselect_hyperslab(space1, H5S_SELECT_SET,
+ 			(const hsize_t*)offset1_2,NULL, count1_2, NULL);
+		status = H5Dwrite(dset1_2,H5T_NATIVE_INT,memspace1_2,space1,H5P_DEFAULT,&CHR_POS[0][0]); 
                 status = H5Sclose(space1); 
 	    } 
 	    cout << "MISC-Chunk" << (x+1)/CHUNKSIZE1 <<"\n";
@@ -1146,9 +1205,11 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     infomap.clear();
     formmap.clear();
     states.clear();
-    status = H5Dclose(dset1);
+    status = H5Dclose(dset1_1);
+    status = H5Dclose(dset1_2);
     status = H5Tclose(memtype1);
-    status = H5Sclose(memspace1);
+    status = H5Sclose(memspace1_1);
+    status = H5Sclose(memspace1_2);
     status = H5Pclose(cparms1);
     status= H5Pclose (dataprop1);
     status = H5Pclose(cparms2);
@@ -1164,8 +1225,10 @@ int writeVCF(string inputfile,string varPath, string varName, string datafile){
     printf("REPORT: Successfully completed loading data.\n Total time elapsed:%f\n", timer1.realTime());
     timer2.start();
     free(misc);
+    free(CHR_POS[0]);
     //build index
-    buildFieldIndex(datafile,format,formcount,row,samcount,inipath);
+    buildPosIndex(datafile,inipath);
+    buildFieldIndex(datafile,format,formcount,inipath);
     timer2.stop();
     printf("REPORT: Successfully completed indexing data.\n Total time elapsed:%f\n", timer2.realTime());
     free(info);
